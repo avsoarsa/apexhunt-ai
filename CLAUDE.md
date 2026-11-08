@@ -16,7 +16,7 @@ The app must never fabricate experience. It rephrases, reorders and mirrors JD v
 ```
 .github/workflows/      android-release.yml (signed .aab), gateway-tests.yml
 render.yaml             Render blueprint → apexhunt/gateway
-signing/                Play UPLOAD key + key.properties (repo must stay PRIVATE)
+signing/                Play UPLOAD key, LOCAL ONLY (git-ignored; never commit; repo is public)
 apexhunt/app/           Flutter app
   lib/core/             config, theme, models, storage, ai/ (llm clients, prompts), text_match (ATS/Truth Guard), billing, gateway client, app_state (Riverpod providers)
   lib/features/         profile (onboarding, CV import), discovery (job sources, mission), pipeline, tailor, vault (PDF/DOCX), dojo, settings
@@ -24,7 +24,7 @@ apexhunt/app/           Flutter app
   env/example.json      build-time config template → env/prod.json (git-ignored)
 apexhunt/gateway/       FastAPI: app/{main,llm,pricing,store,billing,jobs,auth,pages}.py, schema.sql, tests/
 apexhunt/docs/          SETUP, PLAY_STORE_LISTING, DATA_SAFETY, LAUNCH_PLAN, SPEC_CHANGES, QA_TEST_PLAN, store-assets/
-*.pdf, *.md (root)      original 6-document product spec (historical; superseded where SPEC_CHANGES says so)
+spec docs (root)        original 6-document product spec, LOCAL ONLY (git-ignored); superseded where SPEC_CHANGES says so
 ```
 
 ## Commands
@@ -56,8 +56,10 @@ uvicorn app.main:app --reload         # reads env vars; see .env.example
 - Version bump for each Play upload: `version: 1.0.0+N` in `apexhunt/app/pubspec.yaml` (CI uses the run number).
 
 ## Secrets
-- `signing/` is committed because the owner chose that. **The repo must remain private.** If it ever goes public or a collaborator leaves on bad terms, request an upload-key reset in Play Console → App integrity.
-- Never commit `env/prod.json`, `gateway/.env`, API keys or GitHub tokens. Never print secrets in logs.
+- **The GitHub repo is public.** Treat every committed byte as world-readable.
+- `signing/` (Play upload key + passwords) and the original spec docs are git-ignored and live only on the owner's machine. CI gets the key from the `UPLOAD_KEYSTORE_BASE64` and `KEY_PROPERTIES` Actions secrets.
+- Never commit `env/prod.json`, `gateway/.env`, API keys or tokens. Never print secrets in logs or CI output.
+- If the upload key ever leaks, request an upload-key reset in Play Console → App integrity.
 
 ## Where things stand
 See `HANDOFF.md` for status, owner tasks, developer tasks and open questions.

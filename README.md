@@ -6,5 +6,5 @@
 | `apexhunt/docs/SETUP.md` | Zero → Google Play production guide |
 | `.github/workflows/` | Cloud build of the signed `.aab`, gateway tests |
 | `render.yaml` | Render blueprint for the gateway |
-| `*.pdf`, `*.md` (this folder) | Original 6-document product spec (see `apexhunt/docs/SPEC_CHANGES.md` for what changed) |
-| `signing/` | Play upload key. **Git-ignored, never commit.** Back it up separately. |
+
+This repository is **public**. The original product spec documents and the Play upload key (`signing/`) live only on the owner's machine and are git-ignored. Code and docs here are © Sk Arif Majid, all rights reserved, unless a licence is added.
