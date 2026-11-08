@@ -1,5 +1,6 @@
 # Builds a signed Play Store bundle (.aab) in the cloud — no local Flutter install needed.
-# Required repository secrets (Settings → Secrets and variables → Actions):
+# Signing: uses repository secrets if set, otherwise the repo's signing/ folder.
+# Optional repository secrets (Settings → Secrets and variables → Actions):
 #   UPLOAD_KEYSTORE_BASE64   base64 of signing/apexhunt-upload.jks   (base64 -i apexhunt-upload.jks | pbcopy)
 #   KEY_PROPERTIES           full contents of signing/key.properties
 #   APP_ENV_JSON             contents of apexhunt/app/env/prod.json (gateway, Supabase, RevenueCat keys)
@@ -37,9 +38,20 @@ jobs:
           KEY_PROPERTIES: ${{ secrets.KEY_PROPERTIES }}
           APP_ENV_JSON: ${{ secrets.APP_ENV_JSON }}
         run: |
-          echo "$UPLOAD_KEYSTORE_BASE64" | base64 --decode > android/app/upload-keystore.jks
-          printf '%s\n' "$KEY_PROPERTIES" | sed 's#^storeFile=.*#storeFile=upload-keystore.jks#' > android/key.properties
-          mkdir -p env && printf '%s' "$APP_ENV_JSON" > env/prod.json
+          # Prefer repository secrets; fall back to the repo's signing/ folder (private repo only).
+          if [ -n "$UPLOAD_KEYSTORE_BASE64" ]; then
+            echo "$UPLOAD_KEYSTORE_BASE64" | base64 --decode > android/app/upload-keystore.jks
+          elif [ -f ../../signing/apexhunt-upload.jks ]; then
+            cp ../../signing/apexhunt-upload.jks android/app/upload-keystore.jks
+          fi
+          if [ -n "$KEY_PROPERTIES" ]; then
+            printf '%s\n' "$KEY_PROPERTIES" > android/key.properties
+          elif [ -f ../../signing/key.properties ]; then
+            cp ../../signing/key.properties android/key.properties
+          fi
+          [ -f android/key.properties ] && sed -i 's#^storeFile=.*#storeFile=upload-keystore.jks#' android/key.properties
+          # Without APP_ENV_JSON the build runs in bring-your-own-key mode.
+          mkdir -p env && if [ -n "$APP_ENV_JSON" ]; then printf '%s' "$APP_ENV_JSON" > env/prod.json; else echo '{}' > env/prod.json; fi
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test
