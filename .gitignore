@@ -1,0 +1,28 @@
+# ---- Secrets: NEVER commit (Play upload key, passwords, API keys)
+signing/
+**/key.properties
+*.jks
+*.keystore
+**/env/prod.json
+**/.env
+
+# ---- Build outputs (large; rebuild or download from GitHub Actions)
+apexhunt/builds/*.aab
+apexhunt/builds/*.apk
+build/
+.dart_tool/
+.gradle/
+.kotlin/
+.cxx/
+local.properties
+
+# ---- Python
+.venv/
+__pycache__/
+.pytest_cache/
+
+# ---- OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.iml

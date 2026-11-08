@@ -1,0 +1,11 @@
+# Large binaries and secrets never go in git
+builds/*.aab
+builds/*.apk
+signing/
+**/key.properties
+**/*.jks
+gateway/.env
+gateway/.venv/
+**/__pycache__/
+.pytest_cache/
+app/env/prod.json

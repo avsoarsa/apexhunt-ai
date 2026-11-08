@@ -1,0 +1,44 @@
+# One-click deploy on Render (render.com → New → Blueprint → point at this repo). Must live at the repo root.
+services:
+  - type: web
+    name: apexhunt-gateway
+    runtime: docker
+    rootDir: apexhunt/gateway
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter            # free plan sleeps after 15 min idle; starter (~$7/mo) stays warm
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: APP_NAME
+        value: ApexHunt AI
+      - key: COMPANY_NAME
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: SUPPORT_EMAIL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: REVENUECAT_WEBHOOK_AUTH
+        generateValue: true
+      - key: REVENUECAT_SECRET_KEY
+        sync: false
+      - key: ADZUNA_APP_ID
+        sync: false
+      - key: ADZUNA_APP_KEY
+        sync: false
+      - key: JOOBLE_API_KEY
+        sync: false
+      - key: WELCOME_CREDIT_USD
+        value: "0.50"
+      - key: ALLOW_SANDBOX_PURCHASES
+        value: "true"
