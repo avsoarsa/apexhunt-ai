@@ -44,11 +44,10 @@ class TailorEngine {
   // ------------------------------------------------------------------ 2. initial decisions
 
   static Map<String, SkillDecision> initialDecisions(MasterProfile p, JdAnalysis a) {
-    final truth = TextMatch.normalize(p.truthCorpus);
     final learning = p.learning.map(TextMatch.canonical).toSet();
     return {
       for (final r in a.requirements)
-        r.skill: TextMatch.mentions(truth, r.skill, r.aliases)
+        r.skill: TextMatch.hasEvidence(p, r.skill)
             ? SkillDecision.matched
             : learning.contains(TextMatch.canonical(r.skill))
                 ? SkillDecision.learning
@@ -80,15 +79,55 @@ TARGET: ${opportunity.title} @ ${opportunity.company}''';
     final j = await _json(Prompts.tailorCv(freelance: opportunity.kind == MissionMode.freelance), user, maxTokens: 4000, purpose: 'tailor_cv');
     final cv = TailoredCv.fromJson(j);
     cv.learning = cv.learning.where((s) => learning.any((l) => TextMatch.canonical(l) == TextMatch.canonical(s))).toList();
-    applyTruthGuard(cv, profile, analysis);
+    final notHeld = {
+      for (final e in decisions.entries)
+        if (e.value == SkillDecision.gap || e.value == SkillDecision.learning) ...TextMatch.nameKeys(e.key),
+    };
+    applyTruthGuard(cv, profile, analysis, notHeld: notHeld);
     return cv;
   }
 
   /// Deterministic safety net: anything the model wrote that the candidate never said is reverted or removed.
-  static void applyTruthGuard(TailoredCv cv, MasterProfile profile, JdAnalysis analysis) {
+  ///
+  /// [notHeld] = skills the user said they don't have (or are only learning) during check-in. They are
+  /// treated as unsupported even if a word in the profile looks like them.
+  static void applyTruthGuard(TailoredCv cv, MasterProfile profile, JdAnalysis analysis, {Set<String> notHeld = const {}}) {
     final truth = profile.truthCorpus;
-    final truthNorm = TextMatch.normalize(truth);
     final reqs = analysis.requirements;
+    bool held(String skill) => TextMatch.nameKeys(skill).intersection(notHeld).isEmpty && TextMatch.hasEvidence(profile, skill);
+    final forms = {for (final r in reqs) r.skill: TextMatch.claimForms(r, profile)};
+    List<String> badClaims(String text) {
+      final t = TextMatch.normalize(text);
+      return [
+        for (final r in reqs)
+          if (forms[r.skill]!.any((v) => TextMatch.containsTerm(t, v)) && !held(r.skill)) r.skill,
+      ];
+    }
+
+    List<String> badNumbers(String text) => TextMatch.unsupportedNumbers(text, truth);
+
+    // Lines the user really wrote: role/project bullets and check-in contexts (normalised → exact text).
+    String key(String s) => TextMatch.normalize(s).replaceAll(RegExp(r'[.;:!]+$'), '').trim();
+    final realLines = <String, String>{
+      for (final r in profile.roles) for (final b in r.bullets) key(b): b,
+      for (final pr in profile.projects) for (final b in pr.bullets) key(b): b,
+      for (final e in profile.evidence) key(e.context): e.context,
+    };
+    Set<String> words(String s) => key(s).split(RegExp(r'[^a-z0-9+#]+')).where((w) => w.length > 2).toSet();
+    String? realSource(String candidate) {
+      if (candidate.trim().isEmpty) return null;
+      final exact = realLines[key(candidate)];
+      if (exact != null) return exact;
+      final cw = words(candidate);
+      if (cw.isEmpty) return null;
+      for (final entry in realLines.entries) {
+        final rw = words(entry.value);
+        final inter = cw.intersection(rw).length;
+        final union = cw.union(rw).length;
+        if (union > 0 && inter / union >= 0.8) return entry.value; // same line, minor punctuation/wording drift
+      }
+      return null;
+    }
 
     // Roles: keep only real role ids; fall back to original bullets for roles the model skipped.
     final byId = {for (final r in cv.roles) r.roleId: r};
@@ -99,49 +138,52 @@ TARGET: ${opportunity.title} @ ${opportunity.company}''';
 
     for (final role in cv.roles) {
       for (final b in role.bullets) {
-        final claims = TextMatch.unsupportedClaims(b.text, truth, reqs);
-        final numbers = TextMatch.unsupportedNumbers(b.text, truth);
+        // The model fills in `original` itself, so verify it: only the user's real line may be shown as "Was:".
+        b.original = realSource(b.original) ?? '';
+        // A verbatim real line is true by definition (it may still contain an ambiguous word like "go live").
+        if (realLines.containsKey(key(b.text))) {
+          b.flags = [];
+          continue;
+        }
+        final claims = badClaims(b.text);
+        final numbers = badNumbers(b.text);
         if (claims.isEmpty && numbers.isEmpty) continue;
         b.flags = [
           ...claims.map((c) => 'Removed unsupported skill: $c'),
           ...numbers.map((n) => 'Removed number not in your CV: $n'),
         ];
-        final originalOk = b.original.isNotEmpty &&
-            TextMatch.unsupportedClaims(b.original, truth, reqs).isEmpty &&
-            TextMatch.unsupportedNumbers(b.original, truth).isEmpty;
-        if (originalOk) {
+        if (b.original.isNotEmpty) {
           b.text = b.original;
           b.change = BulletChange.unchanged;
         } else {
           b.enabled = false;
+          b.flags.add('No matching line in your CV to fall back to');
         }
       }
       role.bullets.removeWhere((b) => b.text.trim().isEmpty);
     }
 
-    // Skills: only things the candidate has stated.
+    // Skills list: only skills the candidate has actually stated (strict evidence).
     final kept = <String>[];
     for (final s in cv.skills) {
-      if (TextMatch.mentions(truthNorm, s)) {
+      if (held(s)) {
         kept.add(s);
       } else {
         cv.skillFlags.add(s);
       }
     }
     cv.skills = kept.toSet().toList();
-    if (cv.skills.isEmpty) cv.skills = List.of(profile.skills);
+    if (cv.skills.isEmpty) cv.skills = [for (final s in profile.skills) if (TextMatch.nameKeys(s).intersection(notHeld).isEmpty) s];
 
-    cv.summary = _guardSentences(cv.summary, truth, reqs);
-    cv.headline = TextMatch.unsupportedClaims(cv.headline, truth, reqs).isEmpty ? cv.headline : profile.headline;
-    cv.projectIds = cv.projectIds.where((id) => profile.projects.any((p) => p.id == id)).toList();
-  }
-
-  static String _guardSentences(String text, String truth, List<Requirement> reqs) {
-    final sentences = text.split(RegExp(r'(?<=[.!?])\s+'));
-    return sentences
-        .where((s) => TextMatch.unsupportedClaims(s, truth, reqs).isEmpty && TextMatch.unsupportedNumbers(s, truth).isEmpty)
+    // Summary: drop any sentence with an unsupported claim or number.
+    cv.summary = cv.summary
+        .split(RegExp(r'(?<=[.!?])\s+'))
+        .where((sentence) => badClaims(sentence).isEmpty && badNumbers(sentence).isEmpty)
         .join(' ')
         .trim();
+    // Headline: skills and numbers are both checked; fall back to the user's own headline.
+    if (badClaims(cv.headline).isNotEmpty || badNumbers(cv.headline).isNotEmpty) cv.headline = profile.headline;
+    cv.projectIds = cv.projectIds.where((id) => profile.projects.any((p) => p.id == id)).toList();
   }
 
   // ------------------------------------------------------------------ 5. ATS text

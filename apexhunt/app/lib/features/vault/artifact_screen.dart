@@ -42,7 +42,7 @@ class _ArtifactScreenState extends ConsumerState<ArtifactScreen> {
   void _recomputeAts(TailoredArtifact a) {
     final p = ref.read(profileProvider).value;
     if (p == null) return;
-    a.atsAfter = TextMatch.atsScore(TailorEngine.tailoredCvText(p, a.cv), a.analysis.requirements, keywords: a.analysis.keywords);
+    a.atsAfter = TextMatch.atsScore(TailorEngine.tailoredCvText(p, a.cv), a.analysis.requirements, keywords: a.analysis.keywords, skills: a.cv.skills);
   }
 
   Future<Uint8List> _buildPdf(TailoredArtifact a) {
@@ -266,6 +266,7 @@ class _ArtifactScreenState extends ConsumerState<ArtifactScreen> {
     final text = profile == null ? '' : TextMatch.normalize(TailorEngine.tailoredCvText(profile, a.cv));
     final t = Theme.of(context).textTheme;
     final pal = ApexPalette.of(context);
+    bool covered(Requirement r) => TextMatch.covers(text, r.skill, skills: a.cv.skills);
     return ListView(padding: const EdgeInsets.fromLTRB(16, 16, 16, 32), children: [
       Text(a.analysis.summary, style: t.bodyMedium?.copyWith(color: pal.muted)),
       const SizedBox(height: 8),
@@ -273,12 +274,12 @@ class _ArtifactScreenState extends ConsumerState<ArtifactScreen> {
         ListTile(
           contentPadding: EdgeInsets.zero,
           leading: Icon(
-            TextMatch.mentions(text, r.skill, r.aliases) ? Icons.check_circle : (a.decisions[r.skill] == SkillDecision.learning ? Icons.school_outlined : Icons.radio_button_unchecked),
-            color: TextMatch.mentions(text, r.skill, r.aliases) ? AppColors.emerald : (a.decisions[r.skill] == SkillDecision.learning ? AppColors.amber : pal.muted),
+            covered(r) ? Icons.check_circle : (a.decisions[r.skill] == SkillDecision.learning ? Icons.school_outlined : Icons.radio_button_unchecked),
+            color: covered(r) ? AppColors.emerald : (a.decisions[r.skill] == SkillDecision.learning ? AppColors.amber : pal.muted),
           ),
           title: Text(r.skill),
           subtitle: Text(
-            TextMatch.mentions(text, r.skill, r.aliases)
+            covered(r)
                 ? 'Covered on your CV'
                 : a.decisions[r.skill] == SkillDecision.learning
                     ? 'Learning — listed honestly, prep plan ready'
