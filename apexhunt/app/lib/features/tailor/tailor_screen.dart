@@ -116,8 +116,8 @@ class _TailorScreenState extends ConsumerState<TailorScreen> {
       final cv = await engine.tailor(profile: profile, opportunity: o, analysis: a, decisions: decisions);
       final reverted = cv.roles.expand((r) => r.bullets).where((b) => b.flags.isNotEmpty).length + cv.skillFlags.length;
       _log_(reverted == 0 ? 'Truth Guard: every line traces back to your profile ✓' : 'Truth Guard: reverted $reverted AI additions not backed by your profile.', reverted == 0 ? 'JOB_FOUND' : 'GAP_DETECTED');
-      final before = TextMatch.atsScore(TailorEngine.baseCvText(profile), a.requirements, keywords: a.keywords);
-      final after = TextMatch.atsScore(TailorEngine.tailoredCvText(profile, cv), a.requirements, keywords: a.keywords);
+      final before = TextMatch.atsScore(TailorEngine.baseCvText(profile), a.requirements, keywords: a.keywords, skills: profile.skills);
+      final after = TextMatch.atsScore(TailorEngine.tailoredCvText(profile, cv), a.requirements, keywords: a.keywords, skills: cv.skills);
       _log_('ATS keyword match: ${before.round()}% → ${after.round()}%', 'JOB_FOUND');
 
       _log_(o.kind == MissionMode.freelance ? 'Drafting your client proposal…' : 'Drafting your cover letter…');
@@ -224,8 +224,19 @@ class _TailorScreenState extends ConsumerState<TailorScreen> {
       const SizedBox(height: 6),
       Text(a.summary, style: t.bodyMedium?.copyWith(color: pal.muted)),
       SectionLabel('Backed by your CV (${matched.length})'),
+      if (matched.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text("Not really yours? Tap × and it's treated as a gap: kept off your CV, added to your prep plan.", style: t.bodySmall?.copyWith(color: pal.muted)),
+        ),
       Wrap(spacing: 6, runSpacing: 6, children: [
-        for (final r in matched) Pill(r.skill, color: AppColors.emerald, icon: Icons.check),
+        for (final r in matched)
+          InputChip(
+            avatar: const Icon(Icons.check, size: 16, color: AppColors.emerald),
+            label: Text(r.skill),
+            deleteButtonTooltipMessage: "I don't have this",
+            onDeleted: () => setState(() => _checkIns[r.skill]!.decision = SkillDecision.gap),
+          ),
       ]),
       SectionLabel('Not found in your CV (${open.length})'),
       if (open.isEmpty) const Text('Nothing missing — great fit.'),
