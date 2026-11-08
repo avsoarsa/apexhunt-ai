@@ -71,4 +71,21 @@ void main() {
     expect(cv.headline, 'Backend Developer');
     expect(cv.roles.single.bullets.single.text, 'Helped the payments product go live in three cities.');
   });
+
+  test('"guard rails" in a profile is not evidence for Ruby', () {
+    final p = _profile()..roles.first.bullets.add('Added guard rails to the deploy pipeline.');
+    expect(TextMatch.hasEvidence(p, 'Ruby'), isFalse);
+  });
+
+  test('an AI alias the user really has does not flag an honest line', () {
+    final p = _profile()..skills.add('Node.js');
+    final req = Requirement(skill: 'AWS Lambda', aliases: ['Node.js']);
+    expect(TextMatch.unsupportedClaims('Built REST APIs in Node.js.', p, [req]), isEmpty);
+    expect(TextMatch.unsupportedClaims('Deployed serverless functions on AWS Lambda.', p, [req]), ['AWS Lambda']);
+  });
+
+  test('a listed "Microsoft Excel" is evidence for an Excel requirement', () {
+    final p = _profile()..skills.add('Microsoft Excel');
+    expect(TextMatch.hasEvidence(p, 'Excel'), isTrue);
+  });
 }

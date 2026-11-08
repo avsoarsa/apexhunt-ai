@@ -81,7 +81,7 @@ TARGET: ${opportunity.title} @ ${opportunity.company}''';
     cv.learning = cv.learning.where((s) => learning.any((l) => TextMatch.canonical(l) == TextMatch.canonical(s))).toList();
     final notHeld = {
       for (final e in decisions.entries)
-        if (e.value == SkillDecision.gap || e.value == SkillDecision.learning) TextMatch.canonical(e.key),
+        if (e.value == SkillDecision.gap || e.value == SkillDecision.learning) ...TextMatch.nameKeys(e.key),
     };
     applyTruthGuard(cv, profile, analysis, notHeld: notHeld);
     return cv;
@@ -94,10 +94,14 @@ TARGET: ${opportunity.title} @ ${opportunity.company}''';
   static void applyTruthGuard(TailoredCv cv, MasterProfile profile, JdAnalysis analysis, {Set<String> notHeld = const {}}) {
     final truth = profile.truthCorpus;
     final reqs = analysis.requirements;
-    bool held(String skill) => !notHeld.contains(TextMatch.canonical(skill)) && TextMatch.hasEvidence(profile, skill);
+    bool held(String skill) => TextMatch.nameKeys(skill).intersection(notHeld).isEmpty && TextMatch.hasEvidence(profile, skill);
+    final forms = {for (final r in reqs) r.skill: TextMatch.claimForms(r, profile)};
     List<String> badClaims(String text) {
       final t = TextMatch.normalize(text);
-      return [for (final r in reqs) if (TextMatch.claims(t, r.skill) && !held(r.skill)) r.skill];
+      return [
+        for (final r in reqs)
+          if (forms[r.skill]!.any((v) => TextMatch.containsTerm(t, v)) && !held(r.skill)) r.skill,
+      ];
     }
 
     List<String> badNumbers(String text) => TextMatch.unsupportedNumbers(text, truth);
@@ -169,7 +173,7 @@ TARGET: ${opportunity.title} @ ${opportunity.company}''';
       }
     }
     cv.skills = kept.toSet().toList();
-    if (cv.skills.isEmpty) cv.skills = [for (final s in profile.skills) if (!notHeld.contains(TextMatch.canonical(s))) s];
+    if (cv.skills.isEmpty) cv.skills = [for (final s in profile.skills) if (TextMatch.nameKeys(s).intersection(notHeld).isEmpty) s];
 
     // Summary: drop any sentence with an unsupported claim or number.
     cv.summary = cv.summary

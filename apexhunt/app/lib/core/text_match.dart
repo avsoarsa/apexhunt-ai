@@ -133,53 +133,98 @@ class TextMatch {
     'dart': ['dart language', 'dart programming', 'flutter/dart', 'dart/flutter'],
     'express': ['express.js', 'expressjs', 'express framework', 'node/express'],
     'spring': ['spring boot', 'spring framework', 'spring mvc', 'spring cloud'],
-    'ruby': ['ruby on rails', 'ruby language', 'ruby programming', 'rails'],
+    'ruby': ['ruby on rails', 'ruby language', 'ruby programming', 'rails framework', 'rails developer', 'rails api'],
     'unity': ['unity3d', 'unity engine', 'unity game', 'unity developer', 'c# unity'],
-    'excel': ['microsoft excel', 'ms excel', 'excel vba', 'advanced excel'],
+    'microsoft excel': ['microsoft excel', 'ms excel', 'excel vba', 'advanced excel', 'excel macros', 'excel pivot tables'],
   };
 
   /// Structured skill entries the candidate stated (skills list, per-role/project tools, check-in confirmations).
   static Set<String> _statedSkills(MasterProfile p) => {
-        for (final s in p.skills) canonical(s),
-        for (final r in p.roles) for (final s in r.skills) canonical(s),
-        for (final pr in p.projects) for (final s in pr.skills) canonical(s),
-        for (final e in p.evidence) canonical(e.skill),
-        for (final c in p.certifications) canonical(c),
+        for (final s in p.skills) ...nameKeys(s),
+        for (final r in p.roles) for (final s in r.skills) ...nameKeys(s),
+        for (final pr in p.projects) for (final s in pr.skills) ...nameKeys(s),
+        for (final e in p.evidence) ...nameKeys(e.skill),
+        for (final c in p.certifications) ...nameKeys(c),
       };
 
   /// Free text the candidate wrote (bullets, summary, raw CV, check-in contexts).
   static String _statedText(MasterProfile p) => normalize(p.truthCorpus);
 
+  static const _vendorPrefixes = ['apache', 'amazon', 'aws', 'google', 'microsoft', 'azure'];
+
+  /// Vendor-less remainders too generic to stand for the product ("Google Cloud" is not "cloud").
+  static const _genericNames = {
+    'cloud', 'cloud platform', 'web services', 'services', 'platform', 'analytics', 'ads', 'sheets', 'docs', 'drive',
+    'functions', 'teams', 'office', 'search', 'maps', 'storage', 'database', 'data', 'security', 'devops', 'ai', 'ml',
+    'api', 'apis', 'console', 'workspace', 'mail', 'forms', 'word', 'project', 'cloud functions', 'cloud storage',
+  };
+
+  /// Every name a skill goes by: "Amazon Web Services (AWS)" → [Amazon Web Services, AWS];
+  /// "Apache Kafka" → [Apache Kafka, kafka]. Used for both claims and evidence.
+  static List<String> names(String term) {
+    final t = term.trim();
+    final paren = RegExp(r'^(.*?)\s*\(([^)]+)\)\s*$').firstMatch(t);
+    final base = paren == null ? [t] : [paren.group(1)!.trim(), paren.group(2)!.trim()];
+    final out = <String>{};
+    for (final b in base.where((b) => b.isNotEmpty)) {
+      out.add(b);
+      final n = normalize(b);
+      for (final v in _vendorPrefixes) {
+        if (n.startsWith('$v ')) {
+          final rest = n.substring(v.length + 1).trim();
+          if (rest.length >= 2 && !_genericNames.contains(rest)) out.add(rest);
+        }
+      }
+    }
+    return out.toList();
+  }
+
+  /// Canonical keys for all of a skill's names (for comparing user answers and skills lists).
+  static Set<String> nameKeys(String term) => names(term).map(canonical).toSet();
+
+  static List<String>? _strictForms(String term) => _ambiguous[canonical(term)] ?? _ambiguous[normalize(term)];
+
   /// Strict match in free text: no AI aliases; ambiguous names need a disambiguated form.
   static bool mentionsStrict(String textNormalized, String term) {
-    final canon = canonical(term);
-    final strict = _ambiguous[canon];
-    if (strict != null) return strict.any((v) => containsTerm(textNormalized, v));
-    return variants(term).any((v) => containsTerm(textNormalized, v));
+    for (final n in names(term)) {
+      final strict = _strictForms(n);
+      final forms = strict ?? variants(n);
+      if (forms.any((v) => containsTerm(textNormalized, v))) return true;
+    }
+    return false;
   }
 
   /// Does the profile prove this skill? (skill check-in, skills list, Truth Guard)
   static bool hasEvidence(MasterProfile p, String skill) =>
-      _statedSkills(p).contains(canonical(skill)) || mentionsStrict(_statedText(p), skill);
+      nameKeys(skill).intersection(_statedSkills(p)).isNotEmpty || mentionsStrict(_statedText(p), skill);
 
   static bool profileHas(MasterProfile profile, Requirement r) => hasEvidence(profile, r.skill);
 
-  /// Broad claim detection in generated text (bare words count; AI aliases are ignored on purpose:
-  /// an alias like "Node.js" for "AWS Lambda" would otherwise flag every honest Node.js line).
-  static bool claims(String textNormalized, String skill) => variants(skill).any((v) => containsTerm(textNormalized, v));
+  /// Surface forms that count as the generated text *claiming* a requirement. Deliberately broad:
+  /// every name (incl. vendor-less "kafka"), built-in synonyms, and the AI's aliases, except an alias
+  /// that is a separate skill the user really has (e.g. "Node.js" listed as an alias of "AWS Lambda").
+  static Set<String> claimForms(Requirement r, MasterProfile profile) => {
+        for (final n in names(r.skill)) ...variants(n),
+        for (final a in r.aliases)
+          if (a.trim().length >= 2 && !hasEvidence(profile, a)) ...[for (final n in names(a)) ...variants(n)],
+      };
+
+  /// Does normalized [textNormalized] claim the requirement [r]?
+  static bool claims(String textNormalized, Requirement r, MasterProfile profile) =>
+      claimForms(r, profile).any((v) => containsTerm(textNormalized, v));
 
   /// JD requirements the generated [text] claims but the profile can't back up.
   static List<String> unsupportedClaims(String text, MasterProfile profile, List<Requirement> reqs) {
     final t = normalize(text);
     return [
       for (final r in reqs)
-        if (claims(t, r.skill) && !hasEvidence(profile, r.skill)) r.skill,
+        if (claims(t, r, profile) && !hasEvidence(profile, r.skill)) r.skill,
     ];
   }
 
   /// Is [skill] covered by a CV? Counts the CV's skills list exactly and its text strictly.
   static bool covers(String cvTextNormalized, String skill, {List<String> skills = const []}) =>
-      skills.map(canonical).contains(canonical(skill)) || mentionsStrict(cvTextNormalized, skill);
+      nameKeys(skill).intersection(skills.expand(nameKeys).toSet()).isNotEmpty || mentionsStrict(cvTextNormalized, skill);
 
   // ---------------------------------------------------------------- ATS score
 
