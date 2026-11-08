@@ -26,3 +26,14 @@ __pycache__/
 .idea/
 .vscode/
 *.iml
+
+# ---- Original product spec: kept on the owner's machine, not in the public repo
+/Document *.pdf
+/application_flow_multi_agent_state_machines.md
+/database_schema_api_contracts.md
+/engineering_prompt_compliance_rules.md
+/product_requirements_document.md
+/project_execution_milestone_tracker.md
+/step_by_step_implementation_guide.md
+/technical_architecture_specification.md
+/ui_ux_design_system_wireframe_specification.md
