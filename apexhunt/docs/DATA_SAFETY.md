@@ -1,4 +1,6 @@
-# Play Console: Data safety answers
+# Play Console: Data safety answers (managed build)
+
+> For the current bring-your-own-key build (no sign-in, no purchases), use the shorter answers in `PLAY_SUBMISSION_CHECKLIST.md` §5. This page applies once sign-in, Apex credits and purchases ship.
 
 These answers reflect the code as built. Update them if you add analytics, crash reporting, ads or server-side CV storage.
 

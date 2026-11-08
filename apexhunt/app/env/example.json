@@ -3,6 +3,6 @@
   "SUPABASE_URL": "https://YOUR-PROJECT.supabase.co",
   "SUPABASE_ANON_KEY": "sb_publishable_xxx (Supabase → Project Settings → API keys → publishable key)",
   "REVENUECAT_ANDROID_KEY": "goog_xxx (RevenueCat → Project → API keys → Google Play public key)",
-  "SUPPORT_EMAIL": "support@yourdomain.com",
+  "SUPPORT_EMAIL": "sk.wedmist@gmail.com",
   "RC_ENTITLEMENT": "pro"
 }

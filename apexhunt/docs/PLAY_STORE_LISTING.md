@@ -7,7 +7,7 @@ The copy describes exactly what the app does. Play's Metadata and Deceptive Beha
 **Short description (≤80):** `Tailor your real CV to any job, find roles worldwide & ace the interview.`
 
 **Category:** Business · **Tags:** Job search, Productivity, Education
-**Contact email:** your support email · **Website:** your gateway URL or domain · **Privacy policy:** `https://<gateway>/privacy`
+**Contact email:** sk.wedmist@gmail.com · **Privacy policy:** `https://github.com/avsoarsa/apexhunt-ai/blob/main/apexhunt/docs/legal/privacy.md`
 
 ## Full description (≤4000)
 

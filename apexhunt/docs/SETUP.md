@@ -102,7 +102,8 @@ An **organization** account (needs a D-U-N-S number) skips the 14-day requiremen
 
 - Listing copy, screenshots and feature graphic: `docs/PLAY_STORE_LISTING.md` and `docs/store-assets/`.
 - **Data safety**: answers in `docs/DATA_SAFETY.md`.
-- **Privacy policy URL**: `https://<gateway>/privacy`. **Account deletion URL**: `https://<gateway>/delete-account`.
+- **Privacy policy URL**: `https://github.com/avsoarsa/apexhunt-ai/blob/main/apexhunt/docs/legal/privacy.md`. **Account deletion URL**: `…/apexhunt/docs/legal/delete-account.md` (the gateway also serves `/privacy` and `/delete-account`).
+- Exact answers for every App content form: **`docs/PLAY_SUBMISSION_CHECKLIST.md`**.
 - **App access**: "All features available. Sign in with any email address to receive a 6-digit code."
 - **Ads**: No. **Content rating**: complete the questionnaire (utility/productivity, no user-to-user content). **Target audience**: 18+.
 - **AI-generated content**: the app has an in-app "Report AI output" flag on every generated CV, letter, proposal and prep deck, as Play's generative-AI policy requires.

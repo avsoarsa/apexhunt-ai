@@ -60,7 +60,7 @@ under their API terms, which prohibit training on API data by default.</p>
 app (Settings → Delete account & wipe data) or at <a href='/delete-account'>/delete-account</a>. Deletion removes your
 account, wallet, usage ledger and reports within 30 days, except records we must keep for tax or legal reasons.</p>
 <h2>5. Security</h2><p>All traffic uses HTTPS. Access to our database is restricted to the gateway service.</p>
-<h2>6. Children</h2><p>{app} is not directed to children under 16.</p>
+<h2>6. Children</h2><p>{app} is intended for adults (18+) and is not directed to children.</p>
 <h2>7. Contact</h2><p><a href='mailto:{mail}'>{mail}</a></p>""", s)
 
 

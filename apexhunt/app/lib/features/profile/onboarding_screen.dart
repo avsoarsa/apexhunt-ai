@@ -171,6 +171,12 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         ),
         const SizedBox(height: 24),
         FilledButton(onPressed: () => setState(() => _step = 1), child: const Text('Get started')),
+        const SizedBox(height: 8),
+        Text('By continuing you agree to the Terms of Use and Privacy Policy.', textAlign: TextAlign.center, style: t.bodySmall?.copyWith(color: pal.muted)),
+        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          TextButton(onPressed: () => openUrl(AppConfig.privacyUrl), child: const Text('Privacy Policy')),
+          TextButton(onPressed: () => openUrl(AppConfig.termsUrl), child: const Text('Terms of Use')),
+        ]),
       ];
 
   List<Widget> _power(TextTheme t, ApexPalette pal) => [
@@ -224,7 +230,23 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   List<Widget> _import(TextTheme t, ApexPalette pal) => [
         Text('Add your CV', style: t.headlineMedium),
         const SizedBox(height: 8),
-        Text('PDF, DOCX or text. It stays on your phone; only the text is sent to the AI to structure it.', style: t.bodyLarge?.copyWith(color: pal.muted)),
+        Text('PDF, DOCX or text. Your CV is stored only on this phone.', style: t.bodyLarge?.copyWith(color: pal.muted)),
+        const SizedBox(height: 12),
+        ApexCard(
+          padding: const EdgeInsets.all(12),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Icon(Icons.info_outline, size: 20, color: pal.muted),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'When you tap "Build my profile", the CV text is sent to ${_useByok ? 'the AI provider you chose' : 'our AI service'} to structure it. '
+                'The same happens when you tailor a CV. Nothing is used for ads or AI training.',
+                style: t.bodySmall,
+              ),
+            ),
+          ]),
+        ),
+        Align(alignment: Alignment.centerLeft, child: TextButton(onPressed: () => openUrl(AppConfig.privacyUrl), child: const Text('Read the Privacy Policy'))),
         const SizedBox(height: 20),
         ApexCard(
           onTap: _pickFile,

@@ -10,7 +10,7 @@ class AppConfig {
   static const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
   static const supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
   static const revenueCatAndroidKey = String.fromEnvironment('REVENUECAT_ANDROID_KEY');
-  static const supportEmail = String.fromEnvironment('SUPPORT_EMAIL');
+  static const supportEmail = String.fromEnvironment('SUPPORT_EMAIL', defaultValue: 'sk.wedmist@gmail.com');
   static bool get hasSupportEmail => supportEmail.isNotEmpty;
 
   /// RevenueCat entitlement + product identifiers (must match Play Console + RevenueCat).
@@ -22,7 +22,10 @@ class AppConfig {
   static bool get hasManagedAi => hasGateway && hasAuth;
   static bool get hasBilling => revenueCatAndroidKey.isNotEmpty;
 
-  static String get privacyUrl => hasGateway ? '$gatewayUrl/privacy' : 'https://example.com/privacy';
-  static String get termsUrl => hasGateway ? '$gatewayUrl/terms' : 'https://example.com/terms';
-  static String get deleteAccountUrl => hasGateway ? '$gatewayUrl/delete-account' : 'https://example.com/delete-account';
+  /// Public legal pages (Play Console requires a privacy policy + account-deletion URL).
+  /// Override with --dart-define once you have your own domain or the gateway is live.
+  static const _legalBase = 'https://github.com/avsoarsa/apexhunt-ai/blob/main/apexhunt/docs/legal';
+  static const privacyUrl = String.fromEnvironment('PRIVACY_URL', defaultValue: '$_legalBase/privacy.md');
+  static const termsUrl = String.fromEnvironment('TERMS_URL', defaultValue: '$_legalBase/terms.md');
+  static const deleteAccountUrl = String.fromEnvironment('DELETE_ACCOUNT_URL', defaultValue: '$_legalBase/delete-account.md');
 }
