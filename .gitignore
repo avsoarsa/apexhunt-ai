@@ -1,14 +1,13 @@
-# ---- Secrets: NEVER commit (Play upload key, passwords, API keys)
+# Published: all spec documents, source, docs and release builds (owner's decision).
+
+# ---- Credentials: never in a public repo
 signing/
 **/key.properties
 *.jks
 *.keystore
-**/env/prod.json
 **/.env
 
-# ---- Build outputs (large; rebuild or download from GitHub Actions)
-apexhunt/builds/*.aab
-apexhunt/builds/*.apk
+# ---- Build caches (regenerated automatically)
 build/
 .dart_tool/
 .gradle/
@@ -16,24 +15,13 @@ build/
 .cxx/
 local.properties
 
-# ---- Python
+# ---- Python caches
 .venv/
 __pycache__/
 .pytest_cache/
 
-# ---- OS / editor
+# ---- OS / editor junk
 .DS_Store
 .idea/
 .vscode/
 *.iml
-
-# ---- Original product spec: kept on the owner's machine, not in the public repo
-/Document *.pdf
-/application_flow_multi_agent_state_machines.md
-/database_schema_api_contracts.md
-/engineering_prompt_compliance_rules.md
-/product_requirements_document.md
-/project_execution_milestone_tracker.md
-/step_by_step_implementation_guide.md
-/technical_architecture_specification.md
-/ui_ux_design_system_wireframe_specification.md

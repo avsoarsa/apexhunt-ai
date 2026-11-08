@@ -24,7 +24,8 @@ apexhunt/app/           Flutter app
   env/example.json      build-time config template → env/prod.json (git-ignored)
 apexhunt/gateway/       FastAPI: app/{main,llm,pricing,store,billing,jobs,auth,pages}.py, schema.sql, tests/
 apexhunt/docs/          SETUP, PLAY_STORE_LISTING, DATA_SAFETY, LAUNCH_PLAN, SPEC_CHANGES, QA_TEST_PLAN, store-assets/
-spec docs (root)        original 6-document product spec, LOCAL ONLY (git-ignored); superseded where SPEC_CHANGES says so
+*.md (root)             original product spec; superseded where SPEC_CHANGES says so
+apexhunt/builds/        signed release .aab/.apk (bump versionCode for every Play upload)
 ```
 
 ## Commands
@@ -57,7 +58,7 @@ uvicorn app.main:app --reload         # reads env vars; see .env.example
 
 ## Secrets
 - **The GitHub repo is public.** Treat every committed byte as world-readable.
-- `signing/` (Play upload key + passwords) and the original spec docs are git-ignored and live only on the owner's machine. CI gets the key from the `UPLOAD_KEYSTORE_BASE64` and `KEY_PROPERTIES` Actions secrets.
+- `signing/` (Play upload key + passwords) is git-ignored and lives only on the owner's machine. CI gets the key from the `UPLOAD_KEYSTORE_BASE64` and `KEY_PROPERTIES` Actions secrets.
 - Never commit `env/prod.json`, `gateway/.env`, API keys or tokens. Never print secrets in logs or CI output.
 - If the upload key ever leaks, request an upload-key reset in Play Console → App integrity.
 
