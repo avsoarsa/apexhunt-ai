@@ -41,6 +41,8 @@ Key design decisions are in `CLAUDE.md` (honesty rule, architecture) and `apexhu
 - iOS build (Flutter codebase is ready; needs Apple account + StoreKit setup)
 
 ## 4. Questions for the teammate
+*Answered by developer B on 8 Nov 2026: see [`apexhunt/docs/QA_REVIEW_B.md`](apexhunt/docs/QA_REVIEW_B.md) and issues #4–#20.*
+
 1. After the QA pass: what are the top 5 issues blocking a production launch?
 2. Is the on-device pipeline (vs a server agent) right for v1, or do you see reliability or cost problems?
 3. Which backlog items would you do first, and your effort estimates?
