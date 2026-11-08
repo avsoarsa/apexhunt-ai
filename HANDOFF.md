@@ -49,6 +49,7 @@ Key design decisions are in `CLAUDE.md` (honesty rule, architecture) and `apexhu
 - **Claude Code** (CLI/IDE) in this repo reads `CLAUDE.md` automatically. Ask it to fix issues, write tests, or review PRs.
 - **Claude project "AI agent for Job search"** (Sk's claude.ai): has this context. Sk can share it if you're in the same organization.
 - Workflow: branch per change → PR (template asks for tests + honesty check) → review → merge to `main`. Tag `v*` to trigger a release build.
+- **Commit tags:** end every commit subject with **(A)** for Claude or **(B)** for the developer. Both commit as `avsoarsa`, so the tag is how we tell authors apart.
 
 ## 6. Release checklist (each Play upload)
 1. Bump `version: 1.0.0+N` (or let CI use the run number).

@@ -56,6 +56,13 @@ uvicorn app.main:app --reload         # reads env vars; see .env.example
 - Every PR: `flutter analyze` clean, `flutter test` and `pytest` green, and a new test for any engine/pricing change.
 - Version bump for each Play upload: `version: 1.0.0+N` in `apexhunt/app/pubspec.yaml` (CI uses the run number).
 
+## Who's who in commits
+Everyone commits as `avsoarsa` (the owner's account). Tag every commit subject so the author is visible:
+- **(A)** = Claude, e.g. `Fix PDF export on Android 10 (A)`
+- **(B)** = the developer, e.g. `Add Hindi strings (B)`
+
+Work on a branch per change, open a pull request, `git pull` before starting, and never force-push `main`.
+
 ## Secrets
 - **The GitHub repo is public.** Treat every committed byte as world-readable.
 - `signing/` (Play upload key + passwords) is git-ignored and lives only on the owner's machine. CI gets the key from the `UPLOAD_KEYSTORE_BASE64` and `KEY_PROPERTIES` Actions secrets.
