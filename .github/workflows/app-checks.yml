@@ -1,0 +1,28 @@
+# Runs the Flutter app's analyzer and tests on every pull request that touches the app,
+# so regressions (especially in the Truth Guard) are caught before merge.
+name: App checks
+
+on:
+  pull_request:
+    paths: ['apexhunt/app/**', '.github/workflows/app-checks.yml']
+  push:
+    branches: [main]
+    paths: ['apexhunt/app/**', '.github/workflows/app-checks.yml']
+  workflow_dispatch:
+
+jobs:
+  analyze-and-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apexhunt/app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.9'
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
