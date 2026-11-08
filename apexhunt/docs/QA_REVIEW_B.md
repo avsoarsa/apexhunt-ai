@@ -11,7 +11,7 @@ Reviewed at `035a2fd` (build 2). Every finding is a GitHub issue with a severity
 | App analyzer + tests | My workspace can't download Flutter or pub packages, so these ran in CI via the new App checks workflow (#2) | `flutter analyze` clean, 15/15 tests pass. HANDOFF's claim holds. |
 | Truth Guard | Failing Dart tests in draft PR #3, run in CI (15 pass, 7 new fail); line-by-line port for extra probes | Bypasses #9, #10 and #11, plus the design gaps in #12 |
 | Discovery | Port of `matchesCountries`; Remotive's published API terms | #13, #14 |
-| Release builds | APK/AAB manifest, signing and contents inspected with androguard; SHA256SUMS checked | OK: package/version as documented, v2 signature with the upload cert, `allowBackup=false`, no secrets inside, 64-bit libs. The sideload APK is arm64-only, so 32-bit budget phones need Play internal testing. |
+| Release builds | Build 1 and build 2 APK/AAB manifest, signing and contents inspected with androguard; SHA256SUMS checked | OK: package/version as documented, v2 signature with the upload cert, `allowBackup=false`, no secrets inside, 64-bit libs. The sideload APK is arm64-only, so 32-bit budget phones need Play internal testing. It's signed with the upload key and has versionCode 2002 (split-per-ABI), so testers must uninstall it before installing from Play. |
 | Secrets | Pattern scan of the full git history | Clean |
 | **Not done** | Real-device QA, live job APIs, live Gemini/OpenRouter calls (no phone; my workspace blocks those hosts) | See "Device QA still to do" below |
 
