@@ -35,9 +35,9 @@ A short, phone-only pass over the parts of `QA_TEST_PLAN.md` that no one can tes
 ## 3. Discovery (6 min)
 - [ ] Jobs mode, **country India only**, keywords "backend developer". Open 10 results: none should be US-only (look for "US only", a US state such as "Indianapolis, IN", or "US time zones") (#13).
 - [ ] Repeat with **Germany only**: no "Wilmington, DE"-style US listings.
-- [ ] A mission with **4 keywords**: Remotive results appear, and the sources list doesn't show "Remotive unavailable" (build 3 calls Remotive once per mission).
+- [ ] A mission with **4 keywords**: the log doesn't say "Remotive unavailable right now". Remotive may add few or no matches, because its free feed only has about 12 jobs. Build 3 fetches it at most once every 6 hours, and a second mission within 6 hours reuses the copy on the phone.
 - [ ] Each result shows "via <source>", and opening it goes to the real listing.
-- [ ] Turn on **airplane mode**, run a mission: each source says "unavailable", with no crash.
+- [ ] Turn on **airplane mode**, run a mission: no crash. Remotive (and Jobicy within an hour) may still show earlier results from the copy saved on the phone; sources without a saved copy say "unavailable right now — skipped".
 
 ## 4. Vault and export (6 min)
 - [ ] Turn off one bullet: the PDF preview and the ATS score update.
