@@ -76,4 +76,45 @@ void main() {
     expect(matchesCountries(o('Remote - US'), ['IN']), isFalse);
     expect(matchesCountries(o('Join us in Berlin'), ['US']), isFalse, reason: 'lowercase "us" is the pronoun');
   });
+
+  test('a stale copy older than 3 days is not shown when a refresh fails (B)', () async {
+    var now = DateTime(2026, 11, 10, 9);
+    final cache = FeedCache(LocalStore.memory(), () => now);
+    await cache.get('remotive', FeedCache.remotiveTtl, () async => [
+          {'title': 'Old'},
+        ]);
+    now = now.add(const Duration(days: 3, minutes: 1));
+    expect(cache.get('remotive', FeedCache.remotiveTtl, () async => throw Exception('down')), throwsException);
+  });
+
+  test('non-ASCII keys get their own cache files (B)', () async {
+    final store = LocalStore.memory();
+    final now = DateTime(2026, 11, 10, 9);
+    await FeedCache(store, () => now).get('jobicy_डेवलपर', FeedCache.jobicyTtl, () async => [
+          {'n': 1},
+        ]);
+    final other = await FeedCache(store, () => now).get('jobicy_développeur', FeedCache.jobicyTtl, () async => [
+          {'n': 2},
+        ]);
+    expect(other.single['n'], 2, reason: 'different keys must not share a file');
+  });
+
+  test('Jobicy: one request per region per hour, however many keywords (B, review of #28)', () async {
+    final asked = <String?>[];
+    final source = JobicySource(FeedCache(LocalStore.memory()), (geo) async {
+      asked.add(geo);
+      return [
+        {'id': 1, 'jobTitle': 'Flutter Developer', 'jobIndustry': ['Software Engineering'], 'jobGeo': 'USA'},
+        {'id': 2, 'jobTitle': 'Sales Manager', 'jobIndustry': ['Sales'], 'jobGeo': 'UK'},
+      ];
+    });
+    final cfg = MissionConfig(countries: ['US', 'GB']);
+    final hits = await source.search('Flutter Developer', cfg);
+    for (final kw in ['Sales', 'Dart', 'Product Manager']) {
+      await source.search(kw, cfg);
+    }
+    expect(asked, unorderedEquals(['usa', 'uk']), reason: '2 regions, 4 keywords: 2 requests, no keyword sent');
+    expect(hits.map((o) => o.title).toSet(), {'Flutter Developer'});
+  });
 }
+

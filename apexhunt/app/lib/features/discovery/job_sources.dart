@@ -44,11 +44,26 @@ class FeedCache {
   /// Remotive asks for "max. 4 times a day" and blocks more than 2 requests a minute.
   static const remotiveTtl = Duration(hours: 6);
 
-  /// Jobicy states no limit; identical requests are still reused for an hour.
+  /// Jobicy: "Do not schedule automated polling more frequently than once per hour" (their API README).
   static const jobicyTtl = Duration(hours: 1);
 
+  /// If a refresh fails, an older copy is shown only while it's younger than this, so very old
+  /// listings never look fresh after a long outage.
+  static const maxStale = Duration(days: 3);
+
+  /// FNV-1a 64-bit: a stable file name for any key, including non-ASCII text.
+  static String _hash(String key) {
+    var h = BigInt.parse('cbf29ce484222325', radix: 16);
+    final prime = BigInt.parse('100000001b3', radix: 16);
+    final mask = (BigInt.one << 64) - BigInt.one;
+    for (final b in utf8.encode(key)) {
+      h = ((h ^ BigInt.from(b)) * prime) & mask;
+    }
+    return h.toRadixString(16).padLeft(16, '0');
+  }
+
   Future<List<Map>> get(String key, Duration ttl, Future<List<Map>> Function() fetch) async {
-    final file = 'feeds/${key.replaceAll(RegExp(r'[^a-z0-9_-]'), '_')}.json';
+    final file = 'feeds/${_hash(key)}.json';
     var hit = _memory[key];
     if (hit == null && _store != null) {
       final j = await _store.readJson(file);
@@ -63,7 +78,7 @@ class FeedCache {
       await _store?.writeJson(file, {'at': at.toIso8601String(), 'items': items});
       return items;
     } catch (_) {
-      if (hit != null) return hit.$2;
+      if (hit != null && _now().difference(hit.$1) < maxStale) return hit.$2;
       rethrow;
     }
   }
@@ -126,9 +141,18 @@ class RemotiveSource implements JobSource {
   }
 }
 
+/// Jobicy asks for no more than one automated poll an hour, so each region's newest 100 jobs are fetched
+/// at most hourly with no keyword and searched on the phone: at most 3 requests an hour, however many
+/// keywords a mission has.
 class JobicySource implements JobSource {
-  JobicySource([FeedCache? cache]) : _cache = cache ?? FeedCache();
+  JobicySource([FeedCache? cache, this._fetch]) : _cache = cache ?? FeedCache();
   final FeedCache _cache;
+  final Future<List<Map>> Function(String? geo)? _fetch;
+
+  static Future<List<Map>> _download(String? geo) async {
+    final r = await _dio.get('https://jobicy.com/api/v2/remote-jobs', queryParameters: {'count': 100, 'geo': ?geo});
+    return (_json(r.data)['jobs'] as List? ?? []).whereType<Map>().toList();
+  }
 
   @override
   String get name => 'Jobicy';
@@ -136,15 +160,11 @@ class JobicySource implements JobSource {
 
   @override
   Future<List<Opportunity>> search(String query, MissionConfig config) async {
-    final tag = query.split(' ').first.toLowerCase();
     final geos = config.countries.map((c) => _geo[c]).whereType<String>().toSet();
     final results = <Opportunity>[];
-    for (final geo in geos.isEmpty ? <String?>[null] : geos.take(3)) {
-      final jobs = await _cache.get('jobicy_${geo ?? 'all'}_$tag', FeedCache.jobicyTtl, () async {
-        final r = await _dio.get('https://jobicy.com/api/v2/remote-jobs', queryParameters: {'count': 40, 'tag': tag, 'geo': ?geo});
-        return (_json(r.data)['jobs'] as List? ?? []).whereType<Map>().toList();
-      });
-      for (final j in jobs) {
+    for (final String? geo in geos.isEmpty ? <String?>[null] : geos.take(3)) {
+      final feed = await _cache.get('jobicy_${geo ?? 'all'}', FeedCache.jobicyTtl, () => (_fetch ?? _download)(geo));
+      for (final j in feed.where((j) => _mentions(query, [j['jobTitle'], j['jobIndustry'], j['jobExcerpt']]))) {
         final type = j['jobType'] is List ? (j['jobType'] as List).join(' ') : '${j['jobType'] ?? ''}';
         final sal = j['salaryMin'] != null ? '${j['salaryMin']}–${j['salaryMax'] ?? ''} ${j['salaryCurrency'] ?? ''}'.trim() : '';
         results.add(Opportunity(
