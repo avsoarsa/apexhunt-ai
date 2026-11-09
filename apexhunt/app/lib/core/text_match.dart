@@ -20,6 +20,17 @@ class TextMatch {
     'natural language processing': ['nlp'],
     'computer vision': ['cv vision', 'opencv'],
     'amazon web services': ['aws'],
+    // Product names distinctive enough to count without the vendor, even in free text. Short forms that
+    // are ordinary words ("lambda", "access", "dynamics", "pipelines", "glue") must NOT be added here.
+    'apache kafka': ['kafka'],
+    'apache cassandra': ['cassandra'],
+    'apache hadoop': ['hadoop'],
+    'google bigquery': ['bigquery', 'big query'],
+    'google firebase': ['firebase'],
+    'amazon s3': ['aws s3', 's3'],
+    'amazon dynamodb': ['aws dynamodb', 'dynamodb'],
+    'amazon redshift': ['aws redshift', 'redshift'],
+    'microsoft power bi': ['power bi', 'powerbi'],
     'google cloud': ['gcp', 'google cloud platform'],
     'microsoft azure': ['azure'],
     'c#': ['csharp', 'c sharp'],
@@ -139,6 +150,7 @@ class TextMatch {
   };
 
   /// Structured skill entries the candidate stated (skills list, per-role/project tools, check-in confirmations).
+  /// Keys include vendor-less names, so a listed "Lambda" matches "AWS Lambda" and vice versa.
   static Set<String> _statedSkills(MasterProfile p) => {
         for (final s in p.skills) ...nameKeys(s),
         for (final r in p.roles) for (final s in r.skills) ...nameKeys(s),
@@ -159,14 +171,21 @@ class TextMatch {
     'api', 'apis', 'console', 'workspace', 'mail', 'forms', 'word', 'project', 'cloud functions', 'cloud storage',
   };
 
-  /// Every name a skill goes by: "Amazon Web Services (AWS)" → [Amazon Web Services, AWS];
-  /// "Apache Kafka" → [Apache Kafka, kafka]. Used for both claims and evidence.
-  static List<String> names(String term) {
+  /// A skill's full names: "Amazon Web Services (AWS)" → [Amazon Web Services, AWS]. No vendor stripping.
+  /// These are the only names that count as evidence in free text.
+  static List<String> fullNames(String term) {
     final t = term.trim();
     final paren = RegExp(r'^(.*?)\s*\(([^)]+)\)\s*$').firstMatch(t);
     final base = paren == null ? [t] : [paren.group(1)!.trim(), paren.group(2)!.trim()];
+    return [for (final b in base) if (b.isNotEmpty) b];
+  }
+
+  /// Every name a skill goes by: its full names plus vendor-less forms ("AWS Lambda" → [AWS Lambda, lambda]).
+  /// Used to catch claims in generated text and to compare structured skills lists, never as free-text
+  /// evidence: "lambda expressions" or "gave stakeholders access" prove nothing about AWS Lambda or MS Access.
+  static List<String> names(String term) {
     final out = <String>{};
-    for (final b in base.where((b) => b.isNotEmpty)) {
+    for (final b in fullNames(term)) {
       out.add(b);
       final n = normalize(b);
       for (final v in _vendorPrefixes) {
@@ -184,9 +203,10 @@ class TextMatch {
 
   static List<String>? _strictForms(String term) => _ambiguous[canonical(term)] ?? _ambiguous[normalize(term)];
 
-  /// Strict match in free text: no AI aliases; ambiguous names need a disambiguated form.
+  /// Strict match in free text: full names only (no vendor-less forms, no AI aliases);
+  /// ambiguous names need a disambiguated form.
   static bool mentionsStrict(String textNormalized, String term) {
-    for (final n in names(term)) {
+    for (final n in fullNames(term)) {
       final strict = _strictForms(n);
       final forms = strict ?? variants(n);
       if (forms.any((v) => containsTerm(textNormalized, v))) return true;
@@ -195,30 +215,34 @@ class TextMatch {
   }
 
   /// Does the profile prove this skill? (skill check-in, skills list, Truth Guard)
-  static bool hasEvidence(MasterProfile p, String skill) =>
-      nameKeys(skill).intersection(_statedSkills(p)).isNotEmpty || mentionsStrict(_statedText(p), skill);
+  /// For many checks against one profile, build a [ProfileEvidence] once instead.
+  static bool hasEvidence(MasterProfile p, String skill) => ProfileEvidence(p).has(skill);
 
   static bool profileHas(MasterProfile profile, Requirement r) => hasEvidence(profile, r.skill);
 
   /// Surface forms that count as the generated text *claiming* a requirement. Deliberately broad:
   /// every name (incl. vendor-less "kafka"), built-in synonyms, and the AI's aliases, except an alias
   /// that is a separate skill the user really has (e.g. "Node.js" listed as an alias of "AWS Lambda").
-  static Set<String> claimForms(Requirement r, MasterProfile profile) => {
-        for (final n in names(r.skill)) ...variants(n),
-        for (final a in r.aliases)
-          if (a.trim().length >= 2 && !hasEvidence(profile, a)) ...[for (final n in names(a)) ...variants(n)],
-      };
+  static Set<String> claimForms(Requirement r, MasterProfile profile, {ProfileEvidence? evidence}) {
+    final ev = evidence ?? ProfileEvidence(profile);
+    return {
+      for (final n in names(r.skill)) ...variants(n),
+      for (final a in r.aliases)
+        if (a.trim().length >= 2 && !ev.has(a)) ...[for (final n in names(a)) ...variants(n)],
+    };
+  }
 
   /// Does normalized [textNormalized] claim the requirement [r]?
-  static bool claims(String textNormalized, Requirement r, MasterProfile profile) =>
-      claimForms(r, profile).any((v) => containsTerm(textNormalized, v));
+  static bool claims(String textNormalized, Requirement r, MasterProfile profile, {ProfileEvidence? evidence}) =>
+      claimForms(r, profile, evidence: evidence).any((v) => containsTerm(textNormalized, v));
 
   /// JD requirements the generated [text] claims but the profile can't back up.
   static List<String> unsupportedClaims(String text, MasterProfile profile, List<Requirement> reqs) {
     final t = normalize(text);
+    final ev = ProfileEvidence(profile);
     return [
       for (final r in reqs)
-        if (claims(t, r, profile) && !hasEvidence(profile, r.skill)) r.skill,
+        if (claims(t, r, profile, evidence: ev) && !ev.has(r.skill)) r.skill,
     ];
   }
 
@@ -315,4 +339,22 @@ class TextMatch {
     }
     return out;
   }
+}
+
+/// What one profile proves, computed once: its structured skill keys and its normalised free text.
+/// Build one per check-in or guard run; the profile must not change while it's in use.
+class ProfileEvidence {
+  ProfileEvidence(MasterProfile p)
+      : _skills = TextMatch._statedSkills(p),
+        _text = TextMatch._statedText(p);
+
+  final Set<String> _skills;
+  final String _text;
+  final _memo = <String, bool>{};
+
+  /// Structured lists match on any name (incl. vendor-less); free text only on full names.
+  bool has(String skill) => _memo.putIfAbsent(
+        skill,
+        () => TextMatch.nameKeys(skill).intersection(_skills).isNotEmpty || TextMatch.mentionsStrict(_text, skill),
+      );
 }
