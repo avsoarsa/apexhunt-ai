@@ -88,4 +88,28 @@ void main() {
     final p = _profile()..skills.add('Microsoft Excel');
     expect(TextMatch.hasEvidence(p, 'Excel'), isTrue);
   });
+
+  // #23: vendor-less names are claims-only in free text; structured lists and curated synonyms still count.
+  test('a distinctive short name in a bullet ("Kafka") is evidence for "Apache Kafka"', () {
+    final p = _profile()..roles.first.bullets.add('Built Kafka consumers for payment events.');
+    expect(TextMatch.hasEvidence(p, 'Apache Kafka'), isTrue);
+  });
+
+  test('a skills-list "Lambda" is evidence for "AWS Lambda", but a bullet word is not', () {
+    expect(TextMatch.hasEvidence(_profile()..skills.add('Lambda'), 'AWS Lambda'), isTrue);
+    expect(TextMatch.hasEvidence(_profile()..roles.first.bullets.add('Used Java lambda expressions.'), 'AWS Lambda'), isFalse);
+  });
+
+  test('the AI writing a bare vendor-less name is still caught as a claim', () {
+    final p = _profile()..roles.first.bullets.add('Used Java lambda expressions.');
+    expect(TextMatch.unsupportedClaims('Deployed the loan APIs to Lambda.', p, [Requirement(skill: 'AWS Lambda')]), ['AWS Lambda']);
+  });
+
+  test('ProfileEvidence gives the same answers as hasEvidence', () {
+    final p = _profile()..skills.add('Microsoft Excel');
+    final ev = ProfileEvidence(p);
+    for (final s in ['Go', 'Excel', 'PostgreSQL', 'Ruby', 'AWS Lambda', 'Kafka']) {
+      expect(ev.has(s), TextMatch.hasEvidence(p, s), reason: s);
+    }
+  });
 }

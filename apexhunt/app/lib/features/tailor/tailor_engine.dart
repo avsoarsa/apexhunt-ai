@@ -45,9 +45,10 @@ class TailorEngine {
 
   static Map<String, SkillDecision> initialDecisions(MasterProfile p, JdAnalysis a) {
     final learning = p.learning.map(TextMatch.canonical).toSet();
+    final evidence = ProfileEvidence(p);
     return {
       for (final r in a.requirements)
-        r.skill: TextMatch.hasEvidence(p, r.skill)
+        r.skill: evidence.has(r.skill)
             ? SkillDecision.matched
             : learning.contains(TextMatch.canonical(r.skill))
                 ? SkillDecision.learning
@@ -94,8 +95,9 @@ TARGET: ${opportunity.title} @ ${opportunity.company}''';
   static void applyTruthGuard(TailoredCv cv, MasterProfile profile, JdAnalysis analysis, {Set<String> notHeld = const {}}) {
     final truth = profile.truthCorpus;
     final reqs = analysis.requirements;
-    bool held(String skill) => TextMatch.nameKeys(skill).intersection(notHeld).isEmpty && TextMatch.hasEvidence(profile, skill);
-    final forms = {for (final r in reqs) r.skill: TextMatch.claimForms(r, profile)};
+    final evidence = ProfileEvidence(profile);
+    bool held(String skill) => TextMatch.nameKeys(skill).intersection(notHeld).isEmpty && evidence.has(skill);
+    final forms = {for (final r in reqs) r.skill: TextMatch.claimForms(r, profile, evidence: evidence)};
     List<String> badClaims(String text) {
       final t = TextMatch.normalize(text);
       return [

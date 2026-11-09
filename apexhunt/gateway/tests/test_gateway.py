@@ -156,6 +156,37 @@ async def test_flag_delete_and_pages(env):
                 assert p.status_code == 200 and "<h1>" in p.text
 
 
+@pytest.mark.anyio
+async def test_deleted_account_is_refused_and_purchases_stay_credited_once(env):
+    """#4: after deletion the same token gets no new wallet, no welcome credit and no second copy of a purchase."""
+    app, store, *_ = env
+    hook = {"Authorization": "Bearer rc-hook"}
+    pack = {"event": {"type": "NON_RENEWING_PURCHASE", "id": "evt-p1", "app_user_id": USER,
+                      "product_id": "apex_credits_10", "transaction_id": "GPA.5555", "environment": "PRODUCTION"}}
+    renewal = {"event": {"type": "RENEWAL", "id": "evt-r1", "app_user_id": USER, "product_id": "apex_pro_monthly",
+                         "transaction_id": "GPA.6666", "expiration_at_ms": int((time.time() + 86400 * 30) * 1000),
+                         "environment": "PRODUCTION"}}
+    calls = [("GET", "/api/v1/me", None), ("POST", "/api/v1/billing/sync", None),
+             ("POST", "/api/v1/llm/chat", {"messages": [{"role": "user", "content": "hi"}]}),
+             ("POST", "/api/v1/flags", {"artifact_kind": "cv", "reason": "inaccurate"}),
+             ("POST", "/api/v1/jobs/search", {"query": "python developer"})]
+    async with app.router.lifespan_context(app):
+        async with await _client(app) as c:
+            assert (await c.get("/api/v1/me", headers=AUTH)).status_code == 200
+            assert (await c.post("/api/v1/billing/revenuecat", json=pack, headers=hook)).json()["credited"] == 10.0
+            assert (await c.delete("/api/v1/users/me", headers=AUTH)).json() == {"deleted": True}
+            for method, path, body in calls:
+                r = await c.request(method, path, headers=AUTH, json=body)
+                assert r.status_code == 401 and r.json()["detail"] == "This account was deleted.", (path, r.text)
+            # Deleting again succeeds, so a failed sign-in removal can be retried.
+            assert (await c.delete("/api/v1/users/me", headers=AUTH)).json() == {"deleted": True}
+            # Replayed or late webhooks neither credit the old purchase again nor re-create the account.
+            assert (await c.post("/api/v1/billing/revenuecat", json=pack, headers=hook)).json()["credited"] == 0.0
+            assert (await c.post("/api/v1/billing/revenuecat", json=renewal, headers=hook)).status_code == 200
+    assert USER not in store.wallets
+    assert {"txn:GPA.5555", "bonus:GPA.6666"} <= store.purchase_keys
+
+
 @pytest.fixture
 def anyio_backend():
     return "asyncio"

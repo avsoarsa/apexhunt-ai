@@ -14,5 +14,5 @@ Email **sk.wedmist@gmail.com** from the address you signed in with, subject **"D
 
 ## What is deleted and what is kept
 - **Deleted:** account record, email address, credit balance, subscription status record, AI usage ledger, AI-output reports.
-- **Kept:** purchase records we must retain for tax or legal reasons (up to the legally required period). Google Play keeps its own purchase history.
+- **Kept:** purchase records (product, amount and the store's transaction ID), detached from your account, for tax and legal reasons and so a purchase is never credited twice; and the deleted account's random ID with the deletion date, so it can't be reopened to claim new free credit. Google Play keeps its own purchase history.
 - Unused AI credits are forfeited. Cancel any active subscription in **Google Play → Payments & subscriptions** first, otherwise Google will keep billing it.
