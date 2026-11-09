@@ -1,4 +1,4 @@
--- ApexHunt AI gateway schema (run once in the Supabase SQL editor).
+-- ApexHunt AI gateway schema (run in the Supabase SQL editor; safe to re-run after updates).
 -- Lives in its own schema so Supabase's auto-generated REST API never exposes it.
 -- Career data (CVs, tailored documents, prep dossiers) stays on the user's device.
 
@@ -40,15 +40,29 @@ CREATE TABLE IF NOT EXISTS apexhunt.llm_usage_ledger (
 CREATE INDEX IF NOT EXISTS idx_ledger_user_created ON apexhunt.llm_usage_ledger (user_id, created_at DESC);
 
 -- Idempotency for RevenueCat webhooks / sync (store transaction ids, event ids).
+-- Rows outlive account deletion with user_id set to NULL, so a purchase can never be credited twice.
 CREATE TABLE IF NOT EXISTS apexhunt.purchase_events (
     idempotency_key  TEXT PRIMARY KEY,
-    user_id          UUID NOT NULL REFERENCES apexhunt.app_users(id) ON DELETE CASCADE,
+    user_id          UUID REFERENCES apexhunt.app_users(id) ON DELETE SET NULL,
     product_id       TEXT,
     credit_usd       NUMERIC(12, 6) NOT NULL DEFAULT 0,
     event_type       TEXT NOT NULL,
     environment      TEXT,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Deleted accounts: only the random user id and the time. A deleted id never gets a new wallet or
+-- welcome credit, and its sign-in tokens (valid for up to an hour after deletion) are refused.
+CREATE TABLE IF NOT EXISTS apexhunt.deleted_users (
+    id          UUID PRIMARY KEY,
+    deleted_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Upgrade for databases created before deleted_users existed (safe to re-run).
+ALTER TABLE apexhunt.purchase_events ALTER COLUMN user_id DROP NOT NULL;
+ALTER TABLE apexhunt.purchase_events DROP CONSTRAINT IF EXISTS purchase_events_user_id_fkey;
+ALTER TABLE apexhunt.purchase_events ADD CONSTRAINT purchase_events_user_id_fkey
+    FOREIGN KEY (user_id) REFERENCES apexhunt.app_users(id) ON DELETE SET NULL;
 
 -- Google Play generative-AI policy: in-app reporting of AI output.
 CREATE TABLE IF NOT EXISTS apexhunt.ai_content_flags (
@@ -67,6 +81,7 @@ ALTER TABLE apexhunt.user_wallets     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE apexhunt.llm_usage_ledger ENABLE ROW LEVEL SECURITY;
 ALTER TABLE apexhunt.purchase_events  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE apexhunt.ai_content_flags ENABLE ROW LEVEL SECURITY;
+ALTER TABLE apexhunt.deleted_users    ENABLE ROW LEVEL SECURITY;
 
 -- Handy margin view for the founder dashboard.
 CREATE OR REPLACE VIEW apexhunt.daily_margin AS

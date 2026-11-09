@@ -43,7 +43,7 @@ We don't sell or rent personal data, show advertising, build advertising profile
 
 ## 7. Retention and deletion
 - **On your phone:** data stays until you delete it. **Settings → Delete account & wipe data** erases all app data and your stored API key. Uninstalling the app also removes it.
-- **Account (if any):** the same button deletes your account, wallet, usage ledger and reports from our servers. You can also request deletion at the account-deletion page linked below, or by email. We complete requests within 30 days, except records we must keep by law (e.g. tax records of purchases).
+- **Account (if any):** the same button deletes your account, wallet, usage ledger and reports from our servers. You can also request deletion at the account-deletion page linked below, or by email. We complete requests within 30 days, except records we must keep by law (e.g. tax records of purchases). We keep two small records afterwards: the deleted account's random ID and deletion date (so it can't be reopened to claim new free credit), and purchase records (product, amount and the store's transaction ID) detached from your account, so a purchase is never credited twice.
 - **Third parties:** data sent to an AI provider using your own key is governed by that provider's retention policy.
 
 ## 8. Security

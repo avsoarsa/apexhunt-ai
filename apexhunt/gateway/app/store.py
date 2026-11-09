@@ -17,6 +17,10 @@ from typing import Optional, Protocol
 ACTIVE_STATES = ("ACTIVE", "GRACE_PERIOD")
 
 
+class AccountDeleted(Exception):
+    """The user deleted their account. Their id never gets a wallet again, even with a still-valid token."""
+
+
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -71,6 +75,7 @@ class Store(Protocol):
                                event_type: str = "", environment: str = "") -> bool: ...
     async def add_flag(self, user_id: str, artifact_kind: str, reason: str, notes: str, excerpt: str) -> str: ...
     async def delete_user(self, user_id: str) -> None: ...
+    async def is_deleted(self, user_id: str) -> bool: ...
     async def close(self) -> None: ...
 
 
@@ -79,14 +84,19 @@ class Store(Protocol):
 
 @dataclass
 class MemoryStore:
+    """Mirrors PostgresStore's rules, including deletion tombstones and kept purchase keys."""
+
     wallets: dict[str, Wallet] = field(default_factory=dict)
     ledger: list[LedgerEntry] = field(default_factory=list)
     purchase_keys: set[str] = field(default_factory=set)
     flags: list[dict] = field(default_factory=list)
+    deleted: set[str] = field(default_factory=set)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def get_or_create_wallet(self, user_id, email, welcome_credit):
         async with self._lock:
+            if user_id in self.deleted:
+                raise AccountDeleted(user_id)
             if user_id not in self.wallets:
                 self.wallets[user_id] = Wallet(user_id=user_id, credit_balance_usd=Decimal(welcome_credit))
             return self.wallets[user_id]
@@ -96,7 +106,9 @@ class MemoryStore:
 
     async def charge(self, entry):
         async with self._lock:
-            w = self.wallets[entry.user_id]
+            w = self.wallets.get(entry.user_id)
+            if w is None:  # deleted while the AI call was running
+                raise AccountDeleted(entry.user_id)
             w.credit_balance_usd -= entry.total_deducted_usd
             w.lifetime_spent_usd += entry.total_deducted_usd
             self.ledger.append(entry)
@@ -107,6 +119,8 @@ class MemoryStore:
             if idempotency_key in self.purchase_keys:
                 return False
             self.purchase_keys.add(idempotency_key)
+            if user_id in self.deleted:  # key kept, account not re-created
+                return False
             w = self.wallets.setdefault(user_id, Wallet(user_id=user_id, credit_balance_usd=Decimal("0")))
             w.credit_balance_usd += credit_usd
             return True
@@ -117,6 +131,8 @@ class MemoryStore:
                 if idempotency_key in self.purchase_keys:
                     return False
                 self.purchase_keys.add(idempotency_key)
+            if user_id in self.deleted:
+                return False
             w = self.wallets.setdefault(user_id, Wallet(user_id=user_id, credit_balance_usd=Decimal("0")))
             w.subscription_status = status
             w.subscription_plan_id = plan_id
@@ -130,9 +146,15 @@ class MemoryStore:
         return fid
 
     async def delete_user(self, user_id):
-        self.wallets.pop(user_id, None)
-        self.ledger = [e for e in self.ledger if e.user_id != user_id]
-        self.flags = [f for f in self.flags if f["user_id"] != user_id]
+        async with self._lock:
+            self.deleted.add(user_id)
+            self.wallets.pop(user_id, None)
+            self.ledger = [e for e in self.ledger if e.user_id != user_id]
+            self.flags = [f for f in self.flags if f["user_id"] != user_id]
+            # purchase_keys stay on purpose: a purchase must never be credited twice.
+
+    async def is_deleted(self, user_id):
+        return user_id in self.deleted
 
     async def close(self):
         return None
@@ -168,20 +190,30 @@ class PostgresStore:
                                          server_settings={"search_path": "apexhunt,public"})
         return cls(pool)
 
+    @staticmethod
+    async def _is_deleted(con, uid: uuid.UUID) -> bool:
+        return await con.fetchval("SELECT 1 FROM apexhunt.deleted_users WHERE id = $1", uid) is not None
+
     async def get_or_create_wallet(self, user_id, email, welcome_credit):
+        uid = uuid.UUID(user_id)
         async with self.pool.acquire() as con:
             async with con.transaction():
+                if await self._is_deleted(con, uid):
+                    raise AccountDeleted(user_id)
                 await con.execute(
                     "INSERT INTO apexhunt.app_users (id, email) VALUES ($1, $2) "
                     "ON CONFLICT (id) DO UPDATE SET email = COALESCE(EXCLUDED.email, apexhunt.app_users.email), "
                     "last_seen_at = now()",
-                    uuid.UUID(user_id), email)
+                    uid, email)
                 await con.execute(
                     "INSERT INTO apexhunt.user_wallets (user_id, credit_balance_usd) VALUES ($1, $2) "
                     "ON CONFLICT (user_id) DO NOTHING",
-                    uuid.UUID(user_id), welcome_credit)
-                row = await con.fetchrow(f"SELECT {_WALLET_COLS} FROM apexhunt.user_wallets WHERE user_id = $1",
-                                         uuid.UUID(user_id))
+                    uid, welcome_credit)
+                # Check again: a deletion that committed while this transaction waited on the row lock must win
+                # (raising rolls back the wallet that was just created).
+                if await self._is_deleted(con, uid):
+                    raise AccountDeleted(user_id)
+                row = await con.fetchrow(f"SELECT {_WALLET_COLS} FROM apexhunt.user_wallets WHERE user_id = $1", uid)
                 return _wallet_from_row(row)
 
     async def get_wallet(self, user_id):
@@ -198,6 +230,8 @@ class PostgresStore:
                     "lifetime_spent_usd = lifetime_spent_usd + $2, updated_at = now() "
                     "WHERE user_id = $1 RETURNING credit_balance_usd",
                     uid, entry.total_deducted_usd)
+                if balance is None:  # deleted while the AI call was running
+                    raise AccountDeleted(entry.user_id)
                 await con.execute(
                     "INSERT INTO apexhunt.llm_usage_ledger (user_id, execution_mode, purpose, upstream_model_slug, "
                     "prompt_tokens, completion_tokens, upstream_cost_usd, platform_markup_usd, total_deducted_usd, "
@@ -211,13 +245,19 @@ class PostgresStore:
         inserted = await con.fetchval(
             "INSERT INTO apexhunt.purchase_events (idempotency_key, user_id, product_id, credit_usd, event_type, "
             "environment) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (idempotency_key) DO NOTHING RETURNING 1",
-            key, uuid.UUID(user_id), product_id, credit_usd, event_type, environment)
+            key, uuid.UUID(user_id) if user_id else None, product_id, credit_usd, event_type, environment)
         return bool(inserted)
 
     async def credit_purchase(self, idempotency_key, user_id, product_id, credit_usd, event_type, environment):
         uid = uuid.UUID(user_id)
         async with self.pool.acquire() as con:
             async with con.transaction():
+                if await self._is_deleted(con, uid):
+                    # Late webhook for a deleted account: keep the key (unlinked) so this purchase can never be
+                    # credited later, e.g. after RevenueCat transfers it to a new account. Don't re-create the user.
+                    await self._record_event(con, idempotency_key, None, product_id, credit_usd, event_type,
+                                             environment)
+                    return False
                 await con.execute("INSERT INTO apexhunt.app_users (id) VALUES ($1) ON CONFLICT DO NOTHING", uid)
                 await con.execute("INSERT INTO apexhunt.user_wallets (user_id, credit_balance_usd) VALUES ($1, 0) "
                                   "ON CONFLICT DO NOTHING", uid)
@@ -233,6 +273,11 @@ class PostgresStore:
         uid = uuid.UUID(user_id)
         async with self.pool.acquire() as con:
             async with con.transaction():
+                if await self._is_deleted(con, uid):
+                    if idempotency_key:
+                        await self._record_event(con, idempotency_key, None, plan_id, Decimal("0"), event_type,
+                                                 environment)
+                    return False
                 await con.execute("INSERT INTO apexhunt.app_users (id) VALUES ($1) ON CONFLICT DO NOTHING", uid)
                 await con.execute("INSERT INTO apexhunt.user_wallets (user_id, credit_balance_usd) VALUES ($1, 0) "
                                   "ON CONFLICT DO NOTHING", uid)
@@ -253,8 +298,18 @@ class PostgresStore:
         return str(fid)
 
     async def delete_user(self, user_id):
-        # ON DELETE CASCADE removes wallet, ledger, purchase events and flags.
-        await self.pool.execute("DELETE FROM apexhunt.app_users WHERE id = $1", uuid.UUID(user_id))
+        uid = uuid.UUID(user_id)
+        async with self.pool.acquire() as con:
+            async with con.transaction():
+                # Tombstone: this id never gets a new wallet or welcome credit, even with a still-valid token.
+                await con.execute("INSERT INTO apexhunt.deleted_users (id) VALUES ($1) ON CONFLICT DO NOTHING", uid)
+                # ON DELETE CASCADE removes the wallet, ledger and flags. purchase_events keep their idempotency
+                # keys with user_id set to NULL, so a purchase can never be credited twice.
+                await con.execute("DELETE FROM apexhunt.app_users WHERE id = $1", uid)
+
+    async def is_deleted(self, user_id):
+        return bool(await self.pool.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM apexhunt.deleted_users WHERE id = $1)", uuid.UUID(user_id)))
 
     async def close(self):
         await self.pool.close()
