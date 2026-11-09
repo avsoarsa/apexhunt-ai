@@ -1,15 +1,15 @@
-# Play Console submission checklist: ApexHunt AI v1.0.0 (versionCode 2)
+# Play Console submission checklist: ApexHunt AI v1.0.0 (versionCode 3)
 
-The answers below match **this build** (`apexhunt/builds/ApexHunt-AI-1.0.0-build2.aab`). It runs in *bring-your-own-key* mode: no sign-in, no purchases, no server of ours. When you ship the managed build (Apex credits + Pro), revisit sections 5, 6 and 7.
+The answers below match **this build** (`apexhunt/builds/ApexHunt-AI-1.0.0-build3.aab`). It runs in *bring-your-own-key* mode: no sign-in, no purchases, no server of ours. When you ship the managed build (Apex credits + Pro), revisit sections 5, 6 and 7.
 
-Never upload `build1`: it has placeholder legal links. Use **build2** or newer.
+Never upload build 1 or build 2 (removed from `apexhunt/builds/`, still in git history). Use **build 3** or newer.
 
 ## 1. Create the app
 - App name: **ApexHunt AI** · Default language: English (United States) · App · **Free** · accept the declarations.
 - Package (comes from the bundle): `com.apexhunt.ai`. This is permanent and can never be reused.
 
 ## 2. Test first (no review, live in minutes)
-**Testing → Internal testing** → Create release → upload build2 `.aab` → add your Gmail (and the developer's) as testers → copy the opt-in link → open it on your phone → install from the Play Store.
+**Testing → Internal testing** → Create release → upload the build 3 `.aab` → add your Gmail (and the developer's) as testers → copy the opt-in link → open it on your phone → install from the Play Store.
 
 ## 3. Store listing (Grow → Store presence → Main store listing)
 - Short/full description: `PLAY_STORE_LISTING.md`
@@ -17,7 +17,7 @@ Never upload `build1`: it has placeholder legal links. Use **build2** or newer.
 - Category **Business**, contact email **sk.wedmist@gmail.com**
 
 ## 4. App content (Policy → App content)
-| Form | Answer for build2 |
+| Form | Answer for build 3 |
 |---|---|
 | **Privacy policy** | `https://github.com/avsoarsa/apexhunt-ai/blob/main/apexhunt/docs/legal/privacy.md` |
 | **App access** | "Some functionality is restricted." Instructions: *"No login. Discovery, profile and documents work without credentials. AI features (CV import with AI, tailoring, prep) need an AI provider key: on the 'Power your AI' screen choose Google Gemini, paste this key: `<REVIEWER_GEMINI_KEY>`, model `gemini-2.5-flash`, tap Test connection & save."* Create a free key at aistudio.google.com/apikey just for reviewers and set a low quota. |
@@ -30,7 +30,7 @@ Never upload `build1`: it has placeholder legal links. Use **build2** or newer.
 | **Data safety** | See section 5 |
 | **Account deletion** | Build2 has **no user accounts**, so answer that users can't create accounts. When the managed build adds sign-in: Yes, with URL `…/apexhunt/docs/legal/delete-account.md` |
 
-## 5. Data safety (build2)
+## 5. Data safety (build 3)
 - Collects or shares required data types? **Yes**
 - Encrypted in transit? **Yes**
 - Users can request deletion? **Yes** (in-app wipe; no server data)
@@ -58,8 +58,10 @@ Build2 has no in-app products. Billing (Pro subscription + credit packs) arrives
 - [x] Job sources attributed ("via Remotive") and every listing links to the original posting
 - [x] Fonts are OFL-licensed (licences shown in Settings → Open-source licences); icon and artwork are original
 
-## 8. Closed → production
-Closed testing track → 12+ testers opted in for 14 consecutive days → **Apply for production** → answer the questionnaire honestly (what the app does, how you tested, what changed after feedback).
+## 8. Internal testing → production
+- **Sk's account (created about 2021–22):** Google's 12-tester / 14-day closed-test rule applies only to personal accounts created after 13 November 2023, so Sk can go to production directly. Confirm on the Play Console **Dashboard**: if it doesn't ask for a closed test before production, you're exempt. Still install the internal-testing build on your own phone first.
+- **Newer personal accounts:** Closed testing track → 12+ testers opted in for 14 consecutive days → **Apply for production** → answer the questionnaire honestly (what the app does, how you tested, what changed after feedback).
+- **Countries:** Google allows only *paid* Gemini API keys in apps offered in the EU/EEA, Switzerland and the UK. Until there's a paid-key or Apex-credits path, consider leaving those countries out (Production → Countries/regions). Sk's decision.
 
 ## 9. One developer account, many apps
 Your Play developer account can publish many apps. Each needs its own package name, and a new keystore is recommended. Keep every app policy-compliant: serious or repeated violations on one app can suspend the **whole account**, including your other apps.

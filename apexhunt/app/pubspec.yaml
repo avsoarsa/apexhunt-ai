@@ -3,7 +3,7 @@ description: "ApexHunt AI — honest AI CV tailoring, job discovery and intervie
 publish_to: 'none'
 
 # versionName+versionCode. Bump the number after + for every Play Console upload.
-version: 1.0.0+2
+version: 1.0.0+3
 
 environment:
   sdk: ^3.9.0
