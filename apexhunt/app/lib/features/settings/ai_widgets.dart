@@ -164,10 +164,12 @@ class _ByokFormState extends ConsumerState<ByokForm> {
         TextField(controller: _base, decoration: InputDecoration(labelText: 'Base URL (optional)', hintText: _provider.defaultBaseUrl)),
       ],
       const SizedBox(height: 8),
+      if (_provider == ByokProvider.gemini) ...[
+        const GeminiFreeTierNotice(),
+        const SizedBox(height: 8),
+      ],
       Text(
-        _provider == ByokProvider.gemini
-            ? 'Tip: Google AI Studio gives free Gemini API keys.'
-            : 'Your key is stored only in this phone\'s encrypted keystore and sent only to ${_provider.label}.',
+        'Your key is stored only in this phone\'s encrypted keystore and sent only to ${_provider.label}.',
         style: Theme.of(context).textTheme.bodySmall?.copyWith(color: pal.muted),
       ),
       if (_provider.keyHelpUrl.isNotEmpty)
@@ -184,3 +186,30 @@ class _ByokFormState extends ConsumerState<ByokForm> {
     ]);
   }
 }
+
+/// #8: what Google's terms say about free Gemini keys, shown wherever a Gemini key can be entered.
+/// Source: Gemini API Additional Terms (Unpaid Services; EEA/Switzerland/UK clause).
+class GeminiFreeTierNotice extends StatelessWidget {
+  const GeminiFreeTierNotice({super.key});
+
+  static const text = 'Free Gemini keys: Google may use what you send, including your CV, to improve its products, '
+      'and human reviewers may read it. Google asks you not to send personal information on the free tier. '
+      'For your CV, use a key from a Google Cloud project with billing turned on. '
+      'In the EU/EEA, Switzerland and the UK, use a paid key.';
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppColors.amber.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.amber.withValues(alpha: 0.5)),
+        ),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Icon(Icons.privacy_tip_outlined, size: 20, color: AppColors.amber),
+          const SizedBox(width: 10),
+          Expanded(child: Text(text, style: Theme.of(context).textTheme.bodySmall)),
+        ]),
+      );
+}
+

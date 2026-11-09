@@ -1,6 +1,6 @@
 # ApexHunt AI: Privacy Policy
 
-**Effective:** 8 November 2026 · **Developer:** Sk Arif Majid ("ApexHunt AI", "we") · **Contact:** sk.wedmist@gmail.com
+**Effective:** 10 November 2026 · **Developer:** Sk Arif Majid ("ApexHunt AI", "we") · **Contact:** sk.wedmist@gmail.com
 
 ApexHunt AI is an Android app that helps you find jobs and freelance projects, tailor your own CV to a job description, and prepare for interviews. This policy explains what data the app handles, where it goes, and the choices you have.
 
@@ -23,7 +23,7 @@ This data is excluded from Android cloud backup and device-to-device transfer. W
 
 ## 3. Data sent to third parties when you use a feature
 **AI providers.** When you run an AI step (CV import, requirement analysis, tailoring, cover letter/proposal, interview prep), the relevant text is sent to an AI model provider. Where it goes depends on how you power the AI:
-- **Your own API key:** sent **directly from your phone** to the provider you selected (OpenAI, Anthropic, Google Gemini, Groq, OpenRouter, or a custom server you configure), under that provider's privacy policy and API terms. It never passes through our servers.
+- **Your own API key:** sent **directly from your phone** to the provider you selected (OpenAI, Anthropic, Google Gemini, Groq, OpenRouter, or a custom server you configure), under that provider's privacy policy and API terms. It never passes through our servers. Those terms differ, so check them: **free tiers may use what you send to improve the provider's models, and people may review it.** For example, Google's terms for free Gemini API keys say Google uses submitted content and responses to improve its products, that human reviewers may read them, and that you shouldn't send personal information on the free tier. A CV is personal information, so use a paid key for it. In the EU/EEA, Switzerland and the UK, Google allows only paid Gemini API keys in apps like this one. The app shows this warning when you choose Gemini.
 - **Apex AI credits** (when offered): sent through the ApexHunt gateway to a model provider via OpenRouter. The gateway does not store the content of requests or responses. It records token counts and cost for billing.
 
 **Job sources.** When you run a search mission, your search keywords and selected countries are sent to job APIs: Remotive, Jobicy, Remote OK, Arbeitnow, Freelancer.com, Greenhouse and Lever company boards you choose, and (when signed in) Adzuna and Jooble via our gateway. Opening a listing takes you to the original website, which has its own policy.

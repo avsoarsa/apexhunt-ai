@@ -183,7 +183,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         Text('Power your AI', style: t.headlineMedium),
         const SizedBox(height: 8),
         Text(
-          AppConfig.hasManagedAi ? 'Sign in to get free Apex AI credits — enough for your first tailored applications. Or use your own API key.' : 'Connect your own AI provider key. Google Gemini offers free keys.',
+          AppConfig.hasManagedAi ? 'Sign in to get free Apex AI credits — enough for your first tailored applications. Or use your own API key.' : 'Connect your own AI provider key. Your provider\'s data terms apply: free tiers, such as Google Gemini\'s free keys, may use what you send to improve their models.',
           style: t.bodyLarge?.copyWith(color: pal.muted),
         ),
         const SizedBox(height: 20),
@@ -240,7 +240,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             Expanded(
               child: Text(
                 'When you tap "Build my profile", the CV text is sent to ${_useByok ? 'the AI provider you chose' : 'our AI service'} to structure it. '
-                'The same happens when you tailor a CV. Nothing is used for ads or AI training.',
+                'The same happens when you tailor a CV. ApexHunt never uses your CV for ads or AI training.'
+                '${_useByok ? ' Your provider\'s terms decide what it does with the text: free tiers, such as Google Gemini\'s free keys, may use it to improve their models, and people may review it.' : ''}',
                 style: t.bodySmall,
               ),
             ),
