@@ -286,40 +286,97 @@ const countryFlags = {
   'KE': '🇰🇪', 'EG': '🇪🇬', 'IT': '🇮🇹', 'AT': '🇦🇹', 'BE': '🇧🇪',
 };
 
+/// Whole-word terms that place a listing in a country: names, short forms and big cities that are
+/// unambiguous. Never two-letter codes: in free text "IN", "CA", "DE", "SA" are US states or Australian
+/// states, and "in", "at", "be" are ordinary words (#13). Countries not listed here match on their name.
+const _countryTerms = <String, List<String>>{
+  'US': [
+    'united states',
+    'united states of america',
+    'usa',
+    'u.s.',
+    'u.s.a.',
+    'us only',
+    'us based',
+    'in the us',
+    'within the us',
+    'us time zone',
+    'us time zones',
+    'us timezone',
+    'us timezones',
+    'us residents',
+    'us citizens',
+  ],
+  'GB': ['united kingdom', 'uk', 'u.k.', 'great britain', 'britain', 'england', 'scotland', 'wales', 'northern ireland', 'london', 'manchester', 'edinburgh'],
+  'AE': ['united arab emirates', 'uae', 'u.a.e.', 'emirates', 'dubai', 'abu dhabi', 'sharjah'],
+  'DE': ['germany', 'deutschland', 'berlin', 'munich', 'münchen', 'hamburg', 'frankfurt'],
+  'IN': ['india', 'bengaluru', 'bangalore', 'mumbai', 'delhi', 'new delhi', 'hyderabad', 'pune', 'chennai', 'gurugram', 'gurgaon', 'noida', 'kolkata'],
+  'CA': ['canada', 'toronto', 'montreal', 'montréal', 'ottawa', 'calgary'],
+  'AU': ['australia', 'sydney', 'brisbane', 'canberra'],
+  'SA': ['saudi arabia', 'ksa', 'riyadh', 'jeddah'],
+  'NL': ['netherlands', 'amsterdam', 'rotterdam'],
+  'SG': ['singapore'],
+};
+
+/// Places elsewhere whose names contain a country term ("New South Wales" is in Australia, not Wales).
+const _notCountry = <String, List<String>>{
+  'GB': ['new south wales', 'new england'],
+  'MX': ['new mexico'],
+  'IE': ['northern ireland'],
+};
+
 const _regions = {
   'europe': ['GB', 'DE', 'NL', 'FR', 'IE', 'ES', 'PL', 'CH', 'IT', 'AT', 'BE'],
+  'eu': ['DE', 'NL', 'FR', 'IE', 'ES', 'PL', 'IT', 'AT', 'BE'],
+  'european union': ['DE', 'NL', 'FR', 'IE', 'ES', 'PL', 'IT', 'AT', 'BE'],
   'emea': ['GB', 'DE', 'NL', 'FR', 'IE', 'ES', 'PL', 'CH', 'IT', 'AT', 'BE', 'AE', 'SA', 'QA', 'ZA', 'NG', 'KE', 'EG'],
   'middle east': ['AE', 'SA', 'QA'],
+  'gcc': ['AE', 'SA', 'QA'],
   'apac': ['IN', 'AU', 'SG', 'NZ', 'JP', 'MY', 'PH', 'PK', 'BD'],
   'asia': ['IN', 'SG', 'JP', 'MY', 'PH', 'PK', 'BD'],
   'americas': ['US', 'CA', 'BR', 'MX'],
   'north america': ['US', 'CA'],
   'latam': ['BR', 'MX'],
+  'latin america': ['BR', 'MX'],
   'africa': ['ZA', 'NG', 'KE', 'EG'],
 };
+
+bool _hasWord(String text, String term) => RegExp('(?<![a-z0-9])${RegExp.escape(term)}(?![a-z0-9])').hasMatch(text);
+
+String _normalizeLocation(String s) => s.toLowerCase().replaceAll(RegExp(r'[-_/|(),;:]+'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+
+/// Countries a free-text location names, directly or through a region ("Remote, Europe").
+Set<String> countriesIn(String location) {
+  final loc = _normalizeLocation(location);
+  if (loc.isEmpty) return {};
+  final out = <String>{};
+  for (final code in {...countryNames.keys, ..._countryTerms.keys}) {
+    if (code == 'REMOTE') continue;
+    var text = loc;
+    for (final x in _notCountry[code] ?? const <String>[]) {
+      text = text.replaceAll(x, ' ');
+    }
+    final terms = _countryTerms[code] ?? [(countryNames[code] ?? '').toLowerCase()];
+    if (terms.any((t) => t.isNotEmpty && _hasWord(text, t))) out.add(code);
+  }
+  for (final e in _regions.entries) {
+    if (_hasWord(loc, e.key)) out.addAll(e.value);
+  }
+  return out;
+}
 
 /// Whether a listing is open to a candidate targeting [countries].
 bool matchesCountries(Opportunity o, List<String> countries) {
   if (countries.isEmpty || o.kind == MissionMode.freelance) return true;
-  final loc = '${o.location} ${o.country}'.toLowerCase();
-  final worldwide = loc.contains('worldwide') || loc.contains('anywhere') || loc.contains('global') || loc.trim() == 'remote' || loc.trim().isEmpty;
-  for (final c in countries) {
-    if (c == 'REMOTE') {
-      if (o.remote && worldwide) return true;
-      continue;
-    }
-    if (o.country.toUpperCase() == c) return true;
-    final name = (countryNames[c] ?? c).toLowerCase();
-    if (loc.contains(name) || RegExp('\\b${c.toLowerCase()}\\b').hasMatch(loc)) return true;
-    if (c == 'US' && (loc.contains('united states') || loc.contains('usa'))) return true;
-    if (c == 'GB' && (loc.contains('united kingdom') || loc.contains('uk') || loc.contains('london'))) return true;
-    if (c == 'AE' && (loc.contains('dubai') || loc.contains('abu dhabi') || loc.contains('emirates'))) return true;
-    if (o.remote && worldwide) return true;
-    for (final entry in _regions.entries) {
-      if (loc.contains(entry.key) && entry.value.contains(c)) return true;
-    }
-  }
-  return false;
+  final code = o.country.trim().toUpperCase();
+  if (code.isNotEmpty && countries.contains(code)) return true;
+  final named = countriesIn(o.location);
+  final loc = _normalizeLocation(o.location);
+  // "Anywhere in the US" names a country, so it is not worldwide.
+  final worldwide =
+      named.isEmpty && code.isEmpty && (loc.isEmpty || loc == 'remote' || const ['worldwide', 'anywhere', 'global', 'globally'].any((w) => _hasWord(loc, w)));
+  if (o.remote && worldwide) return true;
+  return countries.any((c) => c != 'REMOTE' && named.contains(c));
 }
 
 bool matchesCommitment(Opportunity o, List<String> commitments) {
