@@ -58,6 +58,17 @@ CREATE TABLE IF NOT EXISTS apexhunt.deleted_users (
     deleted_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Credits held by managed AI calls that are still running, so parallel calls can't overspend. A hold never
+-- changes the balance; it is dropped when the call is charged or fails, and stops counting after 15 minutes
+-- (CREDIT_HOLD_TTL_SECONDS) if the server died mid-call.
+CREATE TABLE IF NOT EXISTS apexhunt.wallet_holds (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID NOT NULL REFERENCES apexhunt.user_wallets(user_id) ON DELETE CASCADE,
+    amount_usd  NUMERIC(12, 6) NOT NULL CHECK (amount_usd >= 0),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_wallet_holds_user ON apexhunt.wallet_holds (user_id);
+
 -- Upgrade for databases created before deleted_users existed (safe to re-run).
 ALTER TABLE apexhunt.purchase_events ALTER COLUMN user_id DROP NOT NULL;
 ALTER TABLE apexhunt.purchase_events DROP CONSTRAINT IF EXISTS purchase_events_user_id_fkey;
@@ -82,6 +93,7 @@ ALTER TABLE apexhunt.llm_usage_ledger ENABLE ROW LEVEL SECURITY;
 ALTER TABLE apexhunt.purchase_events  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE apexhunt.ai_content_flags ENABLE ROW LEVEL SECURITY;
 ALTER TABLE apexhunt.deleted_users    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE apexhunt.wallet_holds     ENABLE ROW LEVEL SECURITY;
 
 -- Handy margin view for the founder dashboard.
 CREATE OR REPLACE VIEW apexhunt.daily_margin AS

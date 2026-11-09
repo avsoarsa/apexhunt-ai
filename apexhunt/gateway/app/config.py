@@ -52,6 +52,11 @@ class Settings:
 
     welcome_credit_usd: Decimal = field(default_factory=lambda: Decimal(_env("WELCOME_CREDIT_USD", "0.50")))
     min_balance_usd: Decimal = field(default_factory=lambda: Decimal(_env("MIN_BALANCE_USD", "0.02")))
+    # Managed AI calls hold their worst-case cost while they run (#5). When the price is unknown (model catalog
+    # not synced yet) they hold this much instead, capped at the balance.
+    unpriced_hold_usd: Decimal = field(default_factory=lambda: Decimal(_env("UNPRICED_HOLD_USD", "0.25")))
+    # A hold whose call never finished (server killed mid-call) stops counting after this long.
+    credit_hold_ttl_seconds: int = field(default_factory=lambda: int(_env("CREDIT_HOLD_TTL_SECONDS", "900")))
     max_completion_tokens: int = field(default_factory=lambda: int(_env("MAX_COMPLETION_TOKENS", "6000")))
     max_prompt_chars: int = field(default_factory=lambda: int(_env("MAX_PROMPT_CHARS", "120000")))
     require_subscription_for_managed: bool = field(

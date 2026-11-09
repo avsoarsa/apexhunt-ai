@@ -18,7 +18,7 @@ Budget about 2–3 hours of setup, then a mandatory 14-day closed test if your P
 ## 1. Supabase
 
 1. Create a project (pick the region closest to most users, e.g. Mumbai).
-2. **SQL Editor** → paste `gateway/schema.sql` → Run.
+2. **SQL Editor** → paste `gateway/schema.sql` → Run. Run it again whenever an update changes `schema.sql`, *before* deploying that gateway version (it's safe to re-run, and the new code expects the new tables).
 3. **Authentication → Sign In / Providers → Email**: enabled. Turn **Confirm email** on.
 4. **Authentication → Emails → Templates**: in both *Magic Link* and *Confirm signup*, make the body show the code: `Your ApexHunt code is {{ .Token }}`. The app signs in with the 6-digit code, not the link.
 5. **Authentication → Emails → SMTP Settings**: plug in Resend (or similar) and send from your own domain, or a free `onboarding@resend.dev` sender while testing.

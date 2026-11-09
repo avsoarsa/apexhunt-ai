@@ -8,6 +8,7 @@ documents, prep dossiers) is never stored server-side: it lives on the device.
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -67,6 +68,14 @@ class LedgerEntry:
 class Store(Protocol):
     async def get_or_create_wallet(self, user_id: str, email: Optional[str], welcome_credit: Decimal) -> Wallet: ...
     async def get_wallet(self, user_id: str) -> Optional[Wallet]: ...
+    # Managed AI calls hold their worst-case cost before calling upstream, so parallel requests can't spend
+    # more than the balance (#5). reserve() returns a hold id, or None when balance minus live holds is too low.
+    # Then settle() charges the real cost and drops the hold, or release() drops it if the call failed.
+    # Holds never change the balance itself, and one older than ttl_seconds stops counting, so a request
+    # killed mid-call (deploy, crash) can't lock up credits for good.
+    async def reserve(self, user_id: str, amount: Decimal, ttl_seconds: int) -> Optional[str]: ...
+    async def release(self, hold_id: str) -> None: ...
+    async def settle(self, entry: LedgerEntry, hold_id: Optional[str]) -> Decimal: ...
     async def charge(self, entry: LedgerEntry) -> Decimal: ...
     async def credit_purchase(self, idempotency_key: str, user_id: str, product_id: str, credit_usd: Decimal,
                               event_type: str, environment: str) -> bool: ...
@@ -91,6 +100,7 @@ class MemoryStore:
     purchase_keys: set[str] = field(default_factory=set)
     flags: list[dict] = field(default_factory=list)
     deleted: set[str] = field(default_factory=set)
+    holds: dict[str, tuple[str, Decimal, float]] = field(default_factory=dict)  # id -> (user, amount, monotonic)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def get_or_create_wallet(self, user_id, email, welcome_credit):
@@ -104,8 +114,29 @@ class MemoryStore:
     async def get_wallet(self, user_id):
         return self.wallets.get(user_id)
 
-    async def charge(self, entry):
+    async def reserve(self, user_id, amount, ttl_seconds):
         async with self._lock:
+            w = self.wallets.get(user_id)
+            if w is None:
+                return None
+            now = time.monotonic()
+            for hid in [h for h, (u, _, t) in self.holds.items() if u == user_id and now - t >= ttl_seconds]:
+                del self.holds[hid]  # expired: its request died without settling or releasing
+            held = sum((a for u, a, _ in self.holds.values() if u == user_id), Decimal("0"))
+            if w.credit_balance_usd - held < amount:
+                return None
+            hold_id = str(uuid.uuid4())
+            self.holds[hold_id] = (user_id, amount, now)
+            return hold_id
+
+    async def release(self, hold_id):
+        async with self._lock:
+            self.holds.pop(hold_id, None)
+
+    async def settle(self, entry, hold_id):
+        async with self._lock:
+            if hold_id:
+                self.holds.pop(hold_id, None)
             w = self.wallets.get(entry.user_id)
             if w is None:  # deleted while the AI call was running
                 raise AccountDeleted(entry.user_id)
@@ -113,6 +144,9 @@ class MemoryStore:
             w.lifetime_spent_usd += entry.total_deducted_usd
             self.ledger.append(entry)
             return w.credit_balance_usd
+
+    async def charge(self, entry):
+        return await self.settle(entry, None)
 
     async def credit_purchase(self, idempotency_key, user_id, product_id, credit_usd, event_type, environment):
         async with self._lock:
@@ -149,6 +183,7 @@ class MemoryStore:
         async with self._lock:
             self.deleted.add(user_id)
             self.wallets.pop(user_id, None)
+            self.holds = {h: v for h, v in self.holds.items() if v[0] != user_id}
             self.ledger = [e for e in self.ledger if e.user_id != user_id]
             self.flags = [f for f in self.flags if f["user_id"] != user_id]
             # purchase_keys stay on purpose: a purchase must never be credited twice.
@@ -221,10 +256,37 @@ class PostgresStore:
                                        uuid.UUID(user_id))
         return _wallet_from_row(row) if row else None
 
+    async def reserve(self, user_id, amount, ttl_seconds):
+        uid = uuid.UUID(user_id)
+        async with self.pool.acquire() as con:
+            async with con.transaction():
+                # The wallet row lock queues this user's reservations, so each one sees the holds before it.
+                balance = await con.fetchval(
+                    "SELECT credit_balance_usd FROM apexhunt.user_wallets WHERE user_id = $1 FOR UPDATE", uid)
+                if balance is None:
+                    return None
+                await con.execute("DELETE FROM apexhunt.wallet_holds WHERE user_id = $1 "
+                                  "AND created_at <= now() - $2::int * interval '1 second'", uid, ttl_seconds)
+                held = await con.fetchval(
+                    "SELECT coalesce(sum(amount_usd), 0) FROM apexhunt.wallet_holds WHERE user_id = $1", uid)
+                if Decimal(balance) - Decimal(held) < amount:
+                    return None
+                hold_id = await con.fetchval(
+                    "INSERT INTO apexhunt.wallet_holds (user_id, amount_usd) VALUES ($1, $2) RETURNING id", uid, amount)
+                return str(hold_id)
+
+    async def release(self, hold_id):
+        await self.pool.execute("DELETE FROM apexhunt.wallet_holds WHERE id = $1", uuid.UUID(hold_id))
+
     async def charge(self, entry):
+        return await self.settle(entry, None)
+
+    async def settle(self, entry, hold_id):
         uid = uuid.UUID(entry.user_id)
         async with self.pool.acquire() as con:
             async with con.transaction():
+                if hold_id:
+                    await con.execute("DELETE FROM apexhunt.wallet_holds WHERE id = $1", uuid.UUID(hold_id))
                 balance = await con.fetchval(
                     "UPDATE apexhunt.user_wallets SET credit_balance_usd = credit_balance_usd - $2, "
                     "lifetime_spent_usd = lifetime_spent_usd + $2, updated_at = now() "
