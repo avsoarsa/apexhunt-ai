@@ -1,5 +1,7 @@
 # QA test plan: ApexHunt AI v1.0
 
+> Short on time? [`DEVICE_QA_CHECKLIST.md`](DEVICE_QA_CHECKLIST.md) is a 30-minute phone-only pass with a sample CV and job.
+
 File every finding as a GitHub issue (Bug report / Improvement template) with a severity label.
 
 ## Devices
