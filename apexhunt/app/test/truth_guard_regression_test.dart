@@ -112,4 +112,10 @@ void main() {
       expect(ev.has(s), TextMatch.hasEvidence(p, s), reason: s);
     }
   });
+
+  test('"Power BI" and "Microsoft Power BI" are one skill (B, review of #23)', () {
+    expect(TextMatch.canonical('Power BI'), TextMatch.canonical('Microsoft Power BI'));
+    expect(TextMatch.hasEvidence(_profile()..skills.add('Power BI'), 'Microsoft Power BI'), isTrue);
+  });
 }
+

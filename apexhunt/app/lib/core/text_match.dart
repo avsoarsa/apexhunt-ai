@@ -46,7 +46,6 @@ class TextMatch {
     'project management': ['project manager', 'pmp'],
     'agile': ['scrum', 'kanban'],
     'microsoft excel': ['excel', 'spreadsheets'],
-    'power bi': ['powerbi'],
     'tensorflow': ['tf'],
     'pytorch': ['torch'],
     'robot operating system': ['ros', 'ros2'],
