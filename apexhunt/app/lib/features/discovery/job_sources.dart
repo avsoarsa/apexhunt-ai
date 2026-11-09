@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 
 import '../../core/gateway.dart';
 import '../../core/models.dart';
+import '../../core/storage.dart';
 
 /// Official/public job APIs. Every listing links back to its source as their terms require.
 abstract class JobSource {
@@ -31,6 +32,51 @@ String _clean(String? html) => (html ?? '')
     .replaceAll(RegExp(r'\n\s*\n+'), '\n\n')
     .trim();
 
+/// #14 stopgap until discovery moves behind the gateway: keeps each phone inside the free job APIs'
+/// published limits by caching each response on the device and reusing it until it expires.
+/// A failed refresh falls back to the last good copy.
+class FeedCache {
+  FeedCache([this._store, DateTime Function()? now]) : _now = now ?? DateTime.now;
+  final LocalStore? _store;
+  final DateTime Function() _now;
+  final _memory = <String, (DateTime, List<Map>)>{};
+
+  /// Remotive asks for "max. 4 times a day" and blocks more than 2 requests a minute.
+  static const remotiveTtl = Duration(hours: 6);
+
+  /// Jobicy states no limit; identical requests are still reused for an hour.
+  static const jobicyTtl = Duration(hours: 1);
+
+  Future<List<Map>> get(String key, Duration ttl, Future<List<Map>> Function() fetch) async {
+    final file = 'feeds/${key.replaceAll(RegExp(r'[^a-z0-9_-]'), '_')}.json';
+    var hit = _memory[key];
+    if (hit == null && _store != null) {
+      final j = await _store.readJson(file);
+      final at = j is Map ? DateTime.tryParse('${j['at']}') : null;
+      if (at != null && j is Map && j['items'] is List) hit = (at, (j['items'] as List).whereType<Map>().toList());
+    }
+    if (hit != null && _now().difference(hit.$1) < ttl) return hit.$2;
+    try {
+      final items = await fetch();
+      final at = _now();
+      _memory[key] = (at, items);
+      await _store?.writeJson(file, {'at': at.toIso8601String(), 'items': items});
+      return items;
+    } catch (_) {
+      if (hit != null) return hit.$2;
+      rethrow;
+    }
+  }
+}
+
+/// Does a listing's title, tags or category mention any word of [query]? (Feeds searched on the phone.)
+bool _mentions(String query, Iterable<Object?> fields) {
+  final words = query.toLowerCase().split(RegExp(r'\s+')).where((w) => w.length > 2).toList();
+  if (words.isEmpty) return true;
+  final hay = fields.map((f) => f is List ? f.join(' ') : '${f ?? ''}').join(' ').toLowerCase();
+  return words.any(hay.contains);
+}
+
 String _id(String source, Object? ext) => '$source:${ext ?? DateTime.now().microsecondsSinceEpoch}';
 
 dynamic _json(dynamic data) => data is String ? jsonDecode(data) : data;
@@ -44,13 +90,24 @@ String _commitment(String raw) {
   return '';
 }
 
+/// Remotive's free feed is small (it returned 12 jobs in total, whatever the search, in Nov 2026), so it's
+/// fetched whole at most every 6 hours and searched on the phone: one request per mission at most.
 class RemotiveSource implements JobSource {
+  RemotiveSource([FeedCache? cache, this._fetch]) : _cache = cache ?? FeedCache();
+  final FeedCache _cache;
+  final Future<List<Map>> Function()? _fetch;
+
   @override
   String get name => 'Remotive';
+
+  static Future<List<Map>> _download() async {
+    final r = await _dio.get('https://remotive.com/api/remote-jobs');
+    return (_json(r.data)['jobs'] as List? ?? []).whereType<Map>().toList();
+  }
+
   @override
   Future<List<Opportunity>> search(String query, MissionConfig config) async {
-    final r = await _dio.get('https://remotive.com/api/remote-jobs', queryParameters: {'search': query, 'limit': 40});
-    final jobs = (_json(r.data)['jobs'] as List? ?? []).whereType<Map>();
+    final jobs = (await _cache.get('remotive', FeedCache.remotiveTtl, _fetch ?? _download)).where((j) => _mentions(query, [j['title'], j['tags'], j['category']]));
     return jobs
         .map((j) => Opportunity(
               id: _id(name, j['id']),
@@ -70,6 +127,9 @@ class RemotiveSource implements JobSource {
 }
 
 class JobicySource implements JobSource {
+  JobicySource([FeedCache? cache]) : _cache = cache ?? FeedCache();
+  final FeedCache _cache;
+
   @override
   String get name => 'Jobicy';
   static const _geo = {'US': 'usa', 'GB': 'uk', 'DE': 'germany', 'CA': 'canada', 'AU': 'australia', 'IN': 'apac', 'AE': 'emea', 'FR': 'france', 'NL': 'netherlands', 'ES': 'spain'};
@@ -80,8 +140,11 @@ class JobicySource implements JobSource {
     final geos = config.countries.map((c) => _geo[c]).whereType<String>().toSet();
     final results = <Opportunity>[];
     for (final geo in geos.isEmpty ? <String?>[null] : geos.take(3)) {
-      final r = await _dio.get('https://jobicy.com/api/v2/remote-jobs', queryParameters: {'count': 40, 'tag': tag, 'geo': ?geo});
-      for (final j in (_json(r.data)['jobs'] as List? ?? []).whereType<Map>()) {
+      final jobs = await _cache.get('jobicy_${geo ?? 'all'}_$tag', FeedCache.jobicyTtl, () async {
+        final r = await _dio.get('https://jobicy.com/api/v2/remote-jobs', queryParameters: {'count': 40, 'tag': tag, 'geo': ?geo});
+        return (_json(r.data)['jobs'] as List? ?? []).whereType<Map>().toList();
+      });
+      for (final j in jobs) {
         final type = j['jobType'] is List ? (j['jobType'] as List).join(' ') : '${j['jobType'] ?? ''}';
         final sal = j['salaryMin'] != null ? '${j['salaryMin']}–${j['salaryMax'] ?? ''} ${j['salaryCurrency'] ?? ''}'.trim() : '';
         results.add(Opportunity(
@@ -359,6 +422,8 @@ Set<String> countriesIn(String location) {
     final terms = _countryTerms[code] ?? [(countryNames[code] ?? '').toLowerCase()];
     if (terms.any((t) => t.isNotEmpty && _hasWord(text, t))) out.add(code);
   }
+  // An uppercase "US" ("Remote - US", "US") is the country; lowercase "us" is usually the pronoun.
+  if (RegExp(r'(?<![A-Za-z])US(?![A-Za-z])').hasMatch(location)) out.add('US');
   for (final e in _regions.entries) {
     if (_hasWord(loc, e.key)) out.addAll(e.value);
   }

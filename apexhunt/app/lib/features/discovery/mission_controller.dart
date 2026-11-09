@@ -130,11 +130,12 @@ class MissionController extends Notifier<MissionState> {
     final countries = cfg.countries.map((c) => countryNames[c] ?? c).join(', ');
     _log(freelance ? 'Scanning freelance briefs for ${keywords.join(', ')}…' : 'Scanning roles in $countries for ${keywords.join(', ')}…');
 
+    final feeds = ref.read(feedCacheProvider);
     final sources = <JobSource>[
-      if (freelance) FreelancerSource() else ...[RemotiveSource(), JobicySource(), RemoteOkSource()],
+      if (freelance) FreelancerSource() else ...[RemotiveSource(feeds), JobicySource(feeds), RemoteOkSource()],
       if (!freelance && cfg.countries.contains('DE')) ArbeitnowSource(),
       if (!freelance && cfg.watchedCompanies.isNotEmpty) CompanyBoardsSource(),
-      if (freelance) RemotiveSource(),
+      if (freelance) RemotiveSource(feeds),
     ];
     final api = ref.read(gatewayProvider);
     final signedIn = ref.read(authProvider).value != null;
@@ -190,3 +191,7 @@ class MissionController extends Notifier<MissionState> {
 }
 
 final missionProvider = NotifierProvider<MissionController, MissionState>(MissionController.new);
+
+/// One feed cache per app run, persisted in the local store so limits hold across restarts (#14).
+final feedCacheProvider = Provider<FeedCache>((ref) => FeedCache(ref.read(localStoreProvider)));
+
