@@ -34,7 +34,7 @@ apexhunt/builds/        signed release .aab/.apk (bump versionCode for every Pla
 cd apexhunt/app
 flutter pub get
 flutter analyze                       # must stay at "No issues found"
-flutter test                          # 15 tests
+flutter test                          # 59 tests
 flutter run --dart-define-from-file=env/prod.json      # or no flag = BYOK-only dev mode
 flutter run --dart-define=DEMO_SEED=true               # fictional demo data (screenshots only; never ship)
 flutter build appbundle --release --dart-define-from-file=env/prod.json
