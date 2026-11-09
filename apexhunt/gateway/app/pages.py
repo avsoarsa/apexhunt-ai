@@ -77,7 +77,9 @@ Do not use {app} to misrepresent your experience, qualifications or identity.</p
 <h2>AI output</h2><p>AI output can be wrong. Use the in-app "Report" button to flag problems.</p>
 <h2>Credits and subscriptions</h2><p>Subscriptions renew through Google Play until cancelled in Google Play settings.
 AI credits are consumed per request at the prices shown in the app and are non-refundable except where required by
-law or Google Play policy.</p>
+law or Google Play policy. If Google Play refunds a purchase, the credits it added (including a Pro plan's monthly
+bonus) are removed from your balance, even if that takes it below zero. AI requests that use credits then pause until
+a top-up covers the difference.</p>
 <h2>Job listings</h2><p>Listings come from third-party sources and link to the original posting. We don't control or
 endorse them.</p>""", s)
 

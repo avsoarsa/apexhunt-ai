@@ -70,6 +70,11 @@ class Store(Protocol):
     async def charge(self, entry: LedgerEntry) -> Decimal: ...
     async def credit_purchase(self, idempotency_key: str, user_id: str, product_id: str, credit_usd: Decimal,
                               event_type: str, environment: str) -> bool: ...
+    # Refunds (#6): takes back what purchase_key credited, from whoever received it, once per refund_key, even
+    # below zero. A purchase refunded before it was credited is marked used, so a late webhook can't credit it.
+    # Returns the amount taken back.
+    async def refund_purchase(self, purchase_key: str, refund_key: str, product_id: str, event_type: str,
+                              environment: str) -> Decimal: ...
     async def set_subscription(self, user_id: str, status: str, plan_id: Optional[str],
                                expires_at: Optional[datetime], idempotency_key: Optional[str] = None,
                                event_type: str = "", environment: str = "") -> bool: ...
@@ -89,6 +94,7 @@ class MemoryStore:
     wallets: dict[str, Wallet] = field(default_factory=dict)
     ledger: list[LedgerEntry] = field(default_factory=list)
     purchase_keys: set[str] = field(default_factory=set)
+    purchase_credits: dict[str, tuple[Optional[str], Decimal]] = field(default_factory=dict)  # key -> (user, credit)
     flags: list[dict] = field(default_factory=list)
     deleted: set[str] = field(default_factory=set)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -120,10 +126,28 @@ class MemoryStore:
                 return False
             self.purchase_keys.add(idempotency_key)
             if user_id in self.deleted:  # key kept, account not re-created
+                self.purchase_credits[idempotency_key] = (None, credit_usd)
                 return False
+            self.purchase_credits[idempotency_key] = (user_id, credit_usd)
             w = self.wallets.setdefault(user_id, Wallet(user_id=user_id, credit_balance_usd=Decimal("0")))
             w.credit_balance_usd += credit_usd
             return True
+
+    async def refund_purchase(self, purchase_key, refund_key, product_id, event_type, environment):
+        async with self._lock:
+            if purchase_key not in self.purchase_keys:  # refunded before it was credited
+                self.purchase_keys.update({purchase_key, refund_key})
+                self.purchase_credits[purchase_key] = (None, Decimal("0"))
+                return Decimal("0")
+            if refund_key in self.purchase_keys:
+                return Decimal("0")
+            self.purchase_keys.add(refund_key)
+            owner, credit = self.purchase_credits.get(purchase_key, (None, Decimal("0")))
+            w = self.wallets.get(owner) if owner else None
+            if w is None or credit <= 0:
+                return Decimal("0")
+            w.credit_balance_usd -= credit
+            return credit
 
     async def set_subscription(self, user_id, status, plan_id, expires_at, idempotency_key=None, event_type="", environment=""):
         async with self._lock:
@@ -151,7 +175,8 @@ class MemoryStore:
             self.wallets.pop(user_id, None)
             self.ledger = [e for e in self.ledger if e.user_id != user_id]
             self.flags = [f for f in self.flags if f["user_id"] != user_id]
-            # purchase_keys stay on purpose: a purchase must never be credited twice.
+            # purchase_keys stay on purpose: a purchase must never be credited twice. Unlink them like Postgres.
+            self.purchase_credits = {k: (None if u == user_id else u, c) for k, (u, c) in self.purchase_credits.items()}
 
     async def is_deleted(self, user_id):
         return user_id in self.deleted
@@ -267,6 +292,28 @@ class PostgresStore:
                 await con.execute("UPDATE apexhunt.user_wallets SET credit_balance_usd = credit_balance_usd + $2, "
                                   "updated_at = now() WHERE user_id = $1", uid, credit_usd)
                 return True
+
+    async def refund_purchase(self, purchase_key, refund_key, product_id, event_type, environment):
+        async with self.pool.acquire() as con:
+            async with con.transaction():
+                # Claim the purchase key first. If it's new, the purchase was never credited, and the claim stops
+                # a late webhook from crediting it. If a credit for it is still committing, this waits for it.
+                if await self._record_event(con, purchase_key, None, product_id, Decimal("0"),
+                                            "REFUNDED_BEFORE_CREDIT", environment):
+                    await self._record_event(con, refund_key, None, product_id, Decimal("0"), event_type, environment)
+                    return Decimal("0")
+                row = await con.fetchrow("SELECT user_id, credit_usd FROM apexhunt.purchase_events "
+                                         "WHERE idempotency_key = $1", purchase_key)
+                owner, credit = row["user_id"], Decimal(row["credit_usd"])
+                if not await self._record_event(con, refund_key, str(owner) if owner else None, product_id, -credit,
+                                                event_type, environment):
+                    return Decimal("0")  # this refund was already applied
+                if owner is None or credit <= 0:  # the account was deleted, or the purchase credited nothing
+                    return Decimal("0")
+                # May go below zero: managed AI stays blocked until a top-up covers it.
+                await con.execute("UPDATE apexhunt.user_wallets SET credit_balance_usd = credit_balance_usd - $2, "
+                                  "updated_at = now() WHERE user_id = $1", owner, credit)
+                return credit
 
     async def set_subscription(self, user_id, status, plan_id, expires_at, idempotency_key=None, event_type="",
                                environment=""):
