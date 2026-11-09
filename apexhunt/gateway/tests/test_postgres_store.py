@@ -4,6 +4,7 @@ database where schema.sql has been applied, e.g.
     TEST_DATABASE_URL=postgresql://postgres:pg@127.0.0.1/apex_test pytest tests/test_postgres_store.py
 """
 
+import asyncio
 import os
 import time
 import uuid
@@ -55,6 +56,43 @@ async def test_wallet_lifecycle():
         await store.delete_user(uid)
         assert await store.get_wallet(uid) is None
         assert await store.pool.fetchval("SELECT count(*) FROM apexhunt.llm_usage_ledger WHERE user_id=$1", uuid.UUID(uid)) == 0
+    finally:
+        await store.close()
+
+
+@pytest.mark.anyio
+async def test_parallel_holds_never_exceed_balance():
+    """#5: reservations queue on the wallet row, so concurrent calls can't hold more than the balance."""
+    store = await PostgresStore.connect(DSN)
+    uid = str(uuid.uuid4())
+
+    def entry(charge):
+        return LedgerEntry(uid, "anthropic/claude-sonnet-5.5", 50, 2000, Decimal("0.02"), Decimal("0.00205"), charge)
+
+    try:
+        await store.get_or_create_wallet(uid, None, Decimal("0.50"))
+        holds = await asyncio.gather(*[store.reserve(uid, Decimal("0.12"), 900) for _ in range(20)])
+        granted = [h for h in holds if h]
+        assert len(granted) == 4, "4 x $0.12 fits in $0.50, a 5th doesn't"
+        # Charging a call drops its hold; releasing a failed call's hold frees it.
+        assert await store.settle(entry(Decimal("0.025358")), granted[0]) == Decimal("0.474642")
+        await store.release(granted[1])
+        # Still held: 2 x $0.12, leaving $0.234642 free.
+        assert await store.reserve(uid, Decimal("0.24"), 900) is None
+        assert await store.reserve(uid, Decimal("0.23"), 900) is not None
+        # Holds whose calls died mid-request (deploy, crash) stop counting after the TTL.
+        await store.pool.execute("UPDATE apexhunt.wallet_holds SET created_at = now() - interval '16 minutes' "
+                                 "WHERE user_id = $1", uuid.UUID(uid))
+        last = await store.reserve(uid, Decimal("0.47"), 900)
+        assert last is not None
+        count = "SELECT count(*) FROM apexhunt.wallet_holds WHERE user_id = $1"
+        assert await store.pool.fetchval(count, uuid.UUID(uid)) == 1
+        assert (await store.get_wallet(uid)).credit_balance_usd == Decimal("0.474642"), "holds never move money"
+        # Deleting the account removes its holds, and a call that finishes afterwards isn't recorded.
+        await store.delete_user(uid)
+        assert await store.pool.fetchval(count, uuid.UUID(uid)) == 0
+        with pytest.raises(AccountDeleted):
+            await store.settle(entry(Decimal("0.025358")), last)
     finally:
         await store.close()
 

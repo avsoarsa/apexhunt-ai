@@ -10,7 +10,7 @@ apexhunt/
 │   ├── test/            unit tests (Truth Guard, ATS scoring, matching, DOCX)
 │   └── env/example.json build-time config template (copy to env/prod.json)
 ├── gateway/             FastAPI service: managed AI credits, RevenueCat webhooks, job proxy, privacy pages
-│   ├── schema.sql       run once in Supabase
+│   ├── schema.sql       run in Supabase; re-run when it changes, before deploying
 │   └── tests/
 └── docs/                setup guide, Play Store listing, data safety, launch plan, spec changes
 

@@ -1,3 +1,4 @@
+import asyncio
 import os
 import time
 from decimal import Decimal
@@ -6,14 +7,15 @@ os.environ.setdefault("SUPABASE_JWT_SECRET", "test-secret-test-secret-test-secre
 os.environ.setdefault("OPENROUTER_API_KEY", "sk-test")
 os.environ.setdefault("REVENUECAT_WEBHOOK_AUTH", "Bearer rc-hook")
 
+import anyio  # noqa: E402
 import httpx  # noqa: E402
 import jwt  # noqa: E402
 import pytest  # noqa: E402
 
 from app import pricing  # noqa: E402
 from app.config import Settings  # noqa: E402
-from app.llm import ChatResult, LLMClient, ModelInfo  # noqa: E402
-from app.main import create_app  # noqa: E402
+from app.llm import ChatResult, LLMClient, ModelInfo, UpstreamError  # noqa: E402
+from app.main import _hits, create_app  # noqa: E402
 from app.store import MemoryStore  # noqa: E402
 
 USER = "5b1d8f9e-1c2a-4d3e-9f00-0123456789ab"
@@ -49,6 +51,28 @@ class FakeLLM(LLMClient):
                           upstream_cost_usd=Decimal("0.0036"))
 
 
+class GatedLLM(FakeLLM):
+    """Keeps every call open until the test opens the gate, so requests overlap like a burst of real taps."""
+
+    def __init__(self, cfg):
+        super().__init__(cfg)
+        self.gate = asyncio.Event()
+        self.fail = False
+
+    async def chat(self, slug, messages, *, max_tokens, temperature, json_mode):
+        self.calls.append(slug)
+        await self.gate.wait()
+        if self.fail:
+            raise UpstreamError("The AI engine is busy. Please retry in a moment.", 503)
+        return ChatResult(content="{}", model_slug=slug, prompt_tokens=50, completion_tokens=2000,
+                          upstream_cost_usd=Decimal("0.02"))
+
+
+@pytest.fixture(autouse=True)
+def _fresh_rate_limit():
+    _hits.clear()  # the limiter is per process; don't let one test's requests count against the next
+
+
 @pytest.fixture
 def env():
     cfg = Settings()
@@ -58,8 +82,26 @@ def env():
     return app, store, llm, cfg
 
 
+@pytest.fixture
+def gated():
+    cfg = Settings()
+    store = MemoryStore()
+    llm = GatedLLM(cfg)
+    return create_app(store=store, llm=llm, cfg=cfg, sync_catalog=False), store, llm
+
+
 async def _client(app):
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
+
+
+async def _burst(c, store, llm, n, body):
+    """Sends n chat requests at once and opens the gate once each one holds credits or has been refused."""
+    tasks = [asyncio.create_task(c.post("/api/v1/llm/chat", headers=AUTH, json=body)) for _ in range(n)]
+    with anyio.fail_after(5):
+        while len(store.holds) + sum(t.done() for t in tasks) < n:
+            await asyncio.sleep(0.01)
+    llm.gate.set()
+    return await asyncio.gather(*tasks)
 
 
 # ---------------------------------------------------------------- pricing
@@ -119,6 +161,81 @@ async def test_chat_blocks_empty_wallet_and_unknown_models(env):
             assert r.status_code == 400
             r = await c.post("/api/v1/llm/chat", json={"messages": [{"role": "user", "content": "hi"}]})
             assert r.status_code == 401
+
+
+ELITE_HI = {"model": "apex-elite", "messages": [{"role": "user", "content": "hi"}]}  # worst case ~$0.038
+
+
+@pytest.mark.anyio
+async def test_parallel_chats_cannot_overspend(gated):
+    """#5: five taps at once with room for one worst-case call: one runs, four get 402, balance stays >= 0."""
+    app, store, llm = gated
+    async with app.router.lifespan_context(app):
+        async with await _client(app) as c:
+            await c.get("/api/v1/me", headers=AUTH)
+            store.wallets[USER].credit_balance_usd = Decimal("0.05")
+            rs = await _burst(c, store, llm, 5, ELITE_HI)
+    assert sorted(r.status_code for r in rs) == [200, 402, 402, 402, 402]
+    assert len(llm.calls) == 1, "refused requests never reach the AI provider"
+    assert "available credits" in next(r for r in rs if r.status_code == 402).json()["detail"]
+    balance = store.wallets[USER].credit_balance_usd
+    assert balance == Decimal("0.05") - store.ledger[0].total_deducted_usd and balance >= 0
+    assert not store.holds
+
+
+@pytest.mark.anyio
+async def test_failed_or_cancelled_chat_drops_its_hold(gated):
+    app, store, llm = gated
+    async with app.router.lifespan_context(app):
+        async with await _client(app) as c:
+            await c.get("/api/v1/me", headers=AUTH)
+            store.wallets[USER].credit_balance_usd = Decimal("0.05")
+            llm.gate.set()
+            llm.fail = True
+            r = await c.post("/api/v1/llm/chat", headers=AUTH, json=ELITE_HI)
+            assert r.status_code == 503 and not store.holds
+            # A request cancelled mid-call (client gone, server stopping) drops its hold too.
+            llm.fail = False
+            llm.gate.clear()
+            task = asyncio.create_task(c.post("/api/v1/llm/chat", headers=AUTH, json=ELITE_HI))
+            with anyio.fail_after(5):
+                while not store.holds:
+                    await asyncio.sleep(0.01)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert not store.holds
+            # Nothing was charged and nothing is still held, so the next call has the whole balance.
+            llm.gate.set()
+            assert (await c.post("/api/v1/llm/chat", headers=AUTH, json=ELITE_HI)).status_code == 200
+    assert len(store.ledger) == 1
+
+
+@pytest.mark.anyio
+async def test_unpriced_models_hold_a_flat_amount(gated):
+    """#5 before the price catalog syncs: each call holds $0.25, capped at the balance, instead of nothing."""
+    app, store, llm = gated
+    llm.models = {}
+    body = {"messages": [{"role": "user", "content": "hi"}]}
+    async with app.router.lifespan_context(app):
+        async with await _client(app) as c:
+            await c.get("/api/v1/me", headers=AUTH)  # $0.50 welcome credit: room for two $0.25 holds
+            rs = await _burst(c, store, llm, 5, body)
+            assert sorted(r.status_code for r in rs) == [200, 200, 402, 402, 402]
+            store.wallets[USER].credit_balance_usd = Decimal("0.10")  # a small balance still works
+            assert (await c.post("/api/v1/llm/chat", headers=AUTH, json=body)).status_code == 200
+    assert len(llm.calls) == 3 and not store.holds
+
+
+@pytest.mark.anyio
+async def test_memory_store_holds_expire():
+    store = MemoryStore()
+    await store.get_or_create_wallet(USER, None, Decimal("0.50"))
+    first = await store.reserve(USER, Decimal("0.40"), 900)
+    assert first and await store.reserve(USER, Decimal("0.20"), 900) is None
+    # A hold whose call died mid-request stops counting once it's older than the TTL.
+    assert await store.reserve(USER, Decimal("0.20"), 0) and first not in store.holds
+    assert store.wallets[USER].credit_balance_usd == Decimal("0.50"), "holds never change the balance"
 
 
 @pytest.mark.anyio

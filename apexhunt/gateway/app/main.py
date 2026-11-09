@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from decimal import Decimal
 from typing import Literal, Optional
 
+import anyio
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -184,18 +185,30 @@ def _routes(app: FastAPI) -> None:
         slug = state.llm.resolve(req.model)
         max_tokens = min(req.max_tokens, s.max_completion_tokens)
         worst_case = state.llm.estimate_max_charge(slug, prompt_chars, max_tokens)
-        if worst_case > wallet.credit_balance_usd:
+        # Hold the worst case while the call runs, so parallel requests can't spend more than the balance (#5).
+        # Price unknown (catalog not synced yet): hold a flat amount, capped at the balance.
+        hold = worst_case if worst_case > 0 else min(s.unpriced_hold_usd, wallet.credit_balance_usd)
+        hold_id = await state.store.reserve(user.id, hold, s.credit_hold_ttl_seconds)
+        if hold_id is None:
             raise HTTPException(status_code=402,
-                                detail=f"This request may cost up to ${worst_case:.3f}. Top up or pick a cheaper engine.")
-
-        result = await state.llm.chat(slug, [m.model_dump() for m in req.messages], max_tokens=max_tokens,
-                                      temperature=req.temperature, json_mode=req.json_mode)
+                                detail=f"This request may cost up to ${hold:.3f}, more than your available credits. "
+                                       "Top up, pick a cheaper engine, or wait for a running request to finish.")
+        try:
+            result = await state.llm.chat(slug, [m.model_dump() for m in req.messages], max_tokens=max_tokens,
+                                          temperature=req.temperature, json_mode=req.json_mode)
+        except BaseException:
+            with anyio.CancelScope(shield=True):  # drop the hold even if the request was cancelled
+                await state.store.release(hold_id)
+            raise
         markup = pricing.markup_usd(result.prompt_tokens, result.completion_tokens)
         charge = pricing.user_charge_usd(result.upstream_cost_usd, result.prompt_tokens, result.completion_tokens)
-        balance = await state.store.charge(LedgerEntry(
-            user_id=user.id, upstream_model_slug=result.model_slug, prompt_tokens=result.prompt_tokens,
-            completion_tokens=result.completion_tokens, upstream_cost_usd=result.upstream_cost_usd,
-            platform_markup_usd=markup, total_deducted_usd=charge, purpose=req.purpose))
+        if worst_case > 0 and charge > worst_case:
+            log.warning("charge %s exceeded the worst-case estimate %s (%s)", charge, worst_case, result.model_slug)
+        with anyio.CancelScope(shield=True):  # the upstream call is done and paid for, so always record it
+            balance = await state.store.settle(LedgerEntry(
+                user_id=user.id, upstream_model_slug=result.model_slug, prompt_tokens=result.prompt_tokens,
+                completion_tokens=result.completion_tokens, upstream_cost_usd=result.upstream_cost_usd,
+                platform_markup_usd=markup, total_deducted_usd=charge, purpose=req.purpose), hold_id)
         return {"content": result.content,
                 "usage": {"prompt_tokens": result.prompt_tokens, "completion_tokens": result.completion_tokens},
                 "charged_usd": float(charge), "balance_usd": float(balance)}
