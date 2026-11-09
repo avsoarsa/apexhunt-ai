@@ -4,6 +4,7 @@ database where schema.sql has been applied, e.g.
     TEST_DATABASE_URL=postgresql://postgres:pg@127.0.0.1/apex_test pytest tests/test_postgres_store.py
 """
 
+import asyncio
 import os
 import time
 import uuid
@@ -90,6 +91,52 @@ async def test_deletion_keeps_tombstone_and_purchase_keys():
                                          [late, f"{late}:RENEWAL"]) == 2
     finally:
         await store.pool.execute("DELETE FROM apexhunt.app_users WHERE id=$1", uuid.UUID(other))
+        await store.close()
+
+
+@pytest.mark.anyio
+async def test_refunds_take_credit_back_exactly_once():
+    """#6: a refund takes back what its purchase credited, once, even below zero, and never races a credit."""
+    store = await PostgresStore.connect(DSN)
+    uid, gone = str(uuid.uuid4()), str(uuid.uuid4())
+    run = uuid.uuid4().hex[:8]  # purchase keys are kept forever, so keep them unique per run
+
+    async def credit(key, user, amount):
+        return await store.credit_purchase(key, user, "apex_credits", Decimal(amount), "NON_RENEWING_PURCHASE",
+                                           "PRODUCTION")
+
+    async def refund(key):
+        return await store.refund_purchase(key, f"refund:{key}", "apex_credits", "CANCELLATION", "PRODUCTION")
+
+    async def balance(user):
+        return (await store.get_wallet(user)).credit_balance_usd
+
+    try:
+        await store.get_or_create_wallet(uid, None, Decimal("0.50"))
+        assert await credit(f"txn:R1.{run}", uid, "10")
+        await store.pool.execute("UPDATE apexhunt.user_wallets SET credit_balance_usd = 2.5 WHERE user_id = $1",
+                                 uuid.UUID(uid))  # $8 of it spent
+        assert await refund(f"txn:R1.{run}") == Decimal("10")
+        assert await refund(f"txn:R1.{run}") == Decimal("0"), "a webhook retry takes nothing more"
+        assert await balance(uid) == Decimal("-7.5")
+        # Refunded before it was credited: nothing to take back, and the late purchase webhook can't credit it.
+        assert await refund(f"txn:R2.{run}") == Decimal("0")
+        assert not await credit(f"txn:R2.{run}", uid, "10")
+        # A purchase and its refund arriving at the same moment always net to zero, whichever commits first.
+        before = await balance(uid)
+        for i in range(10):
+            await asyncio.gather(credit(f"txn:R3.{run}.{i}", uid, "5"), refund(f"txn:R3.{run}.{i}"))
+        assert await balance(uid) == before
+        # The buyer deleted their account: the refund is recorded, but there's no wallet to take it from.
+        await store.get_or_create_wallet(gone, None, Decimal("0"))
+        assert await credit(f"txn:R4.{run}", gone, "5")
+        await store.delete_user(gone)
+        assert await refund(f"txn:R4.{run}") == Decimal("0")
+        kept = await store.pool.fetchrow("SELECT user_id, credit_usd FROM apexhunt.purchase_events "
+                                         "WHERE idempotency_key = $1", f"refund:txn:R4.{run}")
+        assert kept["user_id"] is None and kept["credit_usd"] == Decimal("-5")
+    finally:
+        await store.pool.execute("DELETE FROM apexhunt.app_users WHERE id = $1", uuid.UUID(uid))
         await store.close()
 
 

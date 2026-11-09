@@ -47,12 +47,14 @@ async def handle_event(store: Store, s: Settings, event: dict) -> dict:
         return {"status": "ok", "note": "test event"}
     if env == "SANDBOX" and not s.allow_sandbox_purchases:
         return {"status": "ignored", "note": "sandbox"}
+    product = event.get("product_id") or ""
+    if etype == "CANCELLATION":  # before the user check: a refund comes back from whoever the purchase credited
+        return await _cancellation(store, s, event, product, env)
     user_id = resolve_user_id(event)
     if not user_id:
         log.warning("event %s without app user id", event.get("id"))
         return {"status": "ignored", "note": "no user"}
 
-    product = event.get("product_id") or ""
     txn = event.get("transaction_id") or event.get("id")
     key = f"txn:{txn}:{etype}"
 
@@ -78,9 +80,34 @@ async def handle_event(store: Store, s: Settings, event: dict) -> dict:
         applied = await store.set_subscription(user_id, "EXPIRED", product, _ms(event.get("expiration_at_ms")),
                                                idempotency_key=key, event_type=etype, environment=env)
     else:
-        # CANCELLATION keeps access until EXPIRATION; TRANSFER etc. are handled by the next sync.
+        # TRANSFER etc. are handled by the next sync. REFUND_REVERSED is App Store only.
         return {"status": "ok", "note": f"no-op for {etype}"}
     return {"status": "ok", "duplicate": not applied}
+
+
+async def _cancellation(store: Store, s: Settings, event: dict, product: str, env: str) -> dict:
+    """RevenueCat reports refunds as CANCELLATION (cancel_reason CUSTOMER_SUPPORT); Google Play has no separate
+    refund event (#6).
+
+    A credit pack can only be cancelled by a refund or chargeback, so its credit is taken back once, even if that
+    leaves the balance below zero; managed AI then stays blocked until a top-up covers it. A refunded Pro payment
+    takes back that payment's bonus credit, and Pro itself ends with the EXPIRATION event, as RevenueCat advises.
+    Any other cancellation only turns off renewal: Pro stays until EXPIRATION.
+    """
+    txn = event.get("transaction_id")
+    if product in s.credit_packs:
+        purchase_key = f"txn:{txn}"
+    elif event.get("cancel_reason") == "CUSTOMER_SUPPORT":
+        purchase_key = f"bonus:{txn}"
+    else:
+        return {"status": "ok", "note": "no-op for CANCELLATION"}
+    if not txn:
+        log.warning("refund event %s without a transaction id", event.get("id"))
+        return {"status": "ignored", "note": "no transaction id"}
+    taken = await store.refund_purchase(purchase_key, f"refund:{purchase_key}", product, "CANCELLATION", env)
+    if taken:
+        log.info("refund of %s took back $%s", purchase_key, taken)
+    return {"status": "ok", "refunded": float(taken)}
 
 
 async def sync_from_revenuecat(http: httpx.AsyncClient, store: Store, s: Settings, user_id: str) -> dict:

@@ -142,6 +142,73 @@ async def test_revenuecat_webhook_is_idempotent(env):
     assert me["wallet"]["has_active_subscription"] is True
 
 
+HOOK = {"Authorization": "Bearer rc-hook"}
+PACK = {"type": "NON_RENEWING_PURCHASE", "id": "evt-b1", "app_user_id": USER, "product_id": "apex_credits_10",
+        "transaction_id": "GPA.7001", "environment": "PRODUCTION"}
+PACK_REFUND = {**PACK, "type": "CANCELLATION", "id": "evt-c1", "cancel_reason": "CUSTOMER_SUPPORT"}
+
+
+@pytest.mark.anyio
+async def test_refunded_credit_pack_takes_its_credit_back(env):
+    """#6: Google refunds a spent $10 pack: the $10 comes off the balance once, even below zero."""
+    app, store, *_ = env
+    chat = {"messages": [{"role": "user", "content": "hi"}]}
+    async with app.router.lifespan_context(app):
+        async with await _client(app) as c:
+            await c.get("/api/v1/me", headers=AUTH)  # $0.50 welcome credit
+            r = await c.post("/api/v1/billing/revenuecat", json={"event": PACK}, headers=HOOK)
+            assert r.json()["credited"] == 10.0
+            store.wallets[USER].credit_balance_usd = Decimal("2.50")  # $8 of it spent on AI
+            r1 = await c.post("/api/v1/billing/revenuecat", json={"event": PACK_REFUND}, headers=HOOK)
+            r2 = await c.post("/api/v1/billing/revenuecat", json={"event": PACK_REFUND}, headers=HOOK)  # a retry
+            assert (r1.json()["refunded"], r2.json()["refunded"]) == (10.0, 0.0)
+            assert store.wallets[USER].credit_balance_usd == Decimal("-7.50")
+            assert (await c.post("/api/v1/llm/chat", headers=AUTH, json=chat)).status_code == 402
+            # The next pack covers what's owed first, then managed AI works again.
+            again = {**PACK, "id": "evt-b2", "transaction_id": "GPA.7002"}
+            await c.post("/api/v1/billing/revenuecat", json={"event": again}, headers=HOOK)
+            assert store.wallets[USER].credit_balance_usd == Decimal("2.50")
+            assert (await c.post("/api/v1/llm/chat", headers=AUTH, json=chat)).status_code == 200
+
+
+@pytest.mark.anyio
+async def test_refund_before_credit_blocks_a_late_purchase_webhook(env):
+    """#6: webhooks can arrive out of order. A refund that lands first stops the purchase from being credited."""
+    app, store, *_ = env
+    async with app.router.lifespan_context(app):
+        async with await _client(app) as c:
+            await c.get("/api/v1/me", headers=AUTH)
+            r = await c.post("/api/v1/billing/revenuecat", json={"event": PACK_REFUND}, headers=HOOK)
+            assert r.json()["refunded"] == 0.0
+            r = await c.post("/api/v1/billing/revenuecat", json={"event": PACK}, headers=HOOK)
+            assert r.json() == {"status": "ok", "credited": 0.0, "duplicate": True}
+    assert store.wallets[USER].credit_balance_usd == Decimal("0.5")
+
+
+@pytest.mark.anyio
+async def test_refunded_pro_payment_takes_back_its_bonus_only(env):
+    """#6: turning off renewal changes nothing; a refunded Pro payment loses its $1 bonus; Pro ends at EXPIRATION."""
+    app, store, *_ = env
+    sub = {"type": "INITIAL_PURCHASE", "id": "evt-s1", "app_user_id": USER, "product_id": "apex_pro_monthly",
+           "transaction_id": "GPA.7201", "expiration_at_ms": int((time.time() + 86400 * 30) * 1000),
+           "environment": "PRODUCTION"}
+    unsubscribe = {**sub, "type": "CANCELLATION", "id": "evt-s2", "cancel_reason": "UNSUBSCRIBE"}
+    refund = {**sub, "type": "CANCELLATION", "id": "evt-s3", "cancel_reason": "CUSTOMER_SUPPORT"}
+    expire = {**sub, "type": "EXPIRATION", "id": "evt-s4", "expiration_at_ms": int(time.time() * 1000)}
+    async with app.router.lifespan_context(app):
+        async with await _client(app) as c:
+            await c.get("/api/v1/me", headers=AUTH)
+            await c.post("/api/v1/billing/revenuecat", json={"event": sub}, headers=HOOK)  # Pro + $1 bonus
+            r = await c.post("/api/v1/billing/revenuecat", json={"event": unsubscribe}, headers=HOOK)
+            assert r.json()["note"] == "no-op for CANCELLATION"
+            r = await c.post("/api/v1/billing/revenuecat", json={"event": refund}, headers=HOOK)
+            assert r.json()["refunded"] == 1.0
+            wallet = (await c.get("/api/v1/me", headers=AUTH)).json()["wallet"]
+            assert wallet["credit_balance_usd"] == 0.5 and wallet["has_active_subscription"] is True
+            await c.post("/api/v1/billing/revenuecat", json={"event": expire}, headers=HOOK)
+            assert (await c.get("/api/v1/me", headers=AUTH)).json()["wallet"]["has_active_subscription"] is False
+
+
 @pytest.mark.anyio
 async def test_flag_delete_and_pages(env):
     app, store, *_ = env
