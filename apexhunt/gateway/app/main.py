@@ -20,7 +20,7 @@ from . import billing, jobs, pages, pricing
 from .auth import CurrentUser, current_user
 from .config import Settings, settings
 from .llm import LLMClient, UpstreamError
-from .store import LedgerEntry, MemoryStore, PostgresStore, Store
+from .store import AccountDeleted, LedgerEntry, MemoryStore, PostgresStore, Store
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("apexhunt")
@@ -80,6 +80,18 @@ def _rate_limit(user_id: str) -> None:
     q.append(now)
 
 
+# --------------------------------------------------------------------------- deleted accounts
+
+ACCOUNT_DELETED = "This account was deleted."
+
+
+async def active_user(user: CurrentUser = Depends(current_user)) -> CurrentUser:
+    """Refuses tokens of deleted accounts. Supabase access tokens stay valid for up to an hour after deletion."""
+    if await state.store.is_deleted(user.id):
+        raise HTTPException(status_code=401, detail=ACCOUNT_DELETED)
+    return user
+
+
 # --------------------------------------------------------------------------- schemas
 
 
@@ -118,6 +130,11 @@ def _routes(app: FastAPI) -> None:
     async def _upstream(_: Request, exc: UpstreamError):
         return JSONResponse(status_code=exc.status, content={"detail": str(exc)})
 
+    @app.exception_handler(AccountDeleted)
+    async def _deleted(_: Request, __: AccountDeleted):
+        # Raised by the store when a deletion lands mid-request.
+        return JSONResponse(status_code=401, content={"detail": ACCOUNT_DELETED})
+
     @app.get("/", response_class=HTMLResponse)
     async def home():
         return pages.landing(state.settings)
@@ -139,7 +156,7 @@ def _routes(app: FastAPI) -> None:
         return {"ok": True, "models": len(state.llm.models), "catalog_synced_at": state.llm.catalog_synced_at}
 
     @app.get("/api/v1/me")
-    async def me(user: CurrentUser = Depends(current_user)):
+    async def me(user: CurrentUser = Depends(active_user)):
         wallet = await state.store.get_or_create_wallet(user.id, user.email, state.settings.welcome_credit_usd)
         return {"user_id": user.id, "email": user.email, "wallet": wallet.to_json(),
                 "require_subscription_for_managed": state.settings.require_subscription_for_managed}
@@ -151,7 +168,7 @@ def _routes(app: FastAPI) -> None:
         return state.llm.public_catalog()
 
     @app.post("/api/v1/llm/chat")
-    async def chat(req: ChatRequest, user: CurrentUser = Depends(current_user)):
+    async def chat(req: ChatRequest, user: CurrentUser = Depends(active_user)):
         s = state.settings
         _rate_limit(user.id)
         if not s.openrouter_api_key:
@@ -184,7 +201,7 @@ def _routes(app: FastAPI) -> None:
                 "charged_usd": float(charge), "balance_usd": float(balance)}
 
     @app.post("/api/v1/jobs/search")
-    async def job_search(req: JobSearchRequest, user: CurrentUser = Depends(current_user)):
+    async def job_search(req: JobSearchRequest, user: CurrentUser = Depends(active_user)):
         _rate_limit(user.id)
         results = await jobs.search(state.http, state.settings, req.query, req.countries, req.page)
         return {"jobs": results}
@@ -198,7 +215,7 @@ def _routes(app: FastAPI) -> None:
         return await billing.handle_event(state.store, state.settings, payload.get("event") or {})
 
     @app.post("/api/v1/billing/sync")
-    async def billing_sync(user: CurrentUser = Depends(current_user)):
+    async def billing_sync(user: CurrentUser = Depends(active_user)):
         _rate_limit(user.id)
         await state.store.get_or_create_wallet(user.id, user.email, state.settings.welcome_credit_usd)
         result = await billing.sync_from_revenuecat(state.http, state.store, state.settings, user.id)
@@ -206,7 +223,7 @@ def _routes(app: FastAPI) -> None:
         return {**result, "wallet": wallet.to_json() if wallet else None}
 
     @app.post("/api/v1/flags")
-    async def flag(req: FlagRequest, user: CurrentUser = Depends(current_user)):
+    async def flag(req: FlagRequest, user: CurrentUser = Depends(active_user)):
         await state.store.get_or_create_wallet(user.id, user.email, state.settings.welcome_credit_usd)
         fid = await state.store.add_flag(user.id, req.artifact_kind, req.reason, req.notes, req.excerpt)
         log.info("AI output flagged: %s (%s)", fid, req.reason)
@@ -214,6 +231,7 @@ def _routes(app: FastAPI) -> None:
 
     @app.delete("/api/v1/users/me")
     async def delete_me(user: CurrentUser = Depends(current_user)):
+        # Idempotent, and open to already-deleted ids, so a failed sign-in removal below can be retried.
         await state.store.delete_user(user.id)
         s = state.settings
         if s.supabase_url and s.supabase_service_role_key:

@@ -58,7 +58,10 @@ under their API terms, which prohibit training on API data by default.</p>
 <h2>4. Retention and deletion</h2>
 <p>Account and billing records are kept while your account exists. You can delete your account at any time in the
 app (Settings → Delete account & wipe data) or at <a href='/delete-account'>/delete-account</a>. Deletion removes your
-account, wallet, usage ledger and reports within 30 days, except records we must keep for tax or legal reasons.</p>
+account, wallet, usage ledger and reports within 30 days, except records we must keep for tax or legal reasons.
+We keep two small records afterwards: the deleted account's random ID and deletion date (so it can't be reopened to
+claim new free credit), and purchase records (product, amount and the store's transaction ID) detached from your
+account, so a purchase is never credited twice.</p>
 <h2>5. Security</h2><p>All traffic uses HTTPS. Access to our database is restricted to the gateway service.</p>
 <h2>6. Children</h2><p>{app} is intended for adults (18+) and is not directed to children.</p>
 <h2>7. Contact</h2><p><a href='mailto:{mail}'>{mail}</a></p>""", s)
