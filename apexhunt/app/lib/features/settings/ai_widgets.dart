@@ -104,12 +104,7 @@ class _ByokFormState extends ConsumerState<ByokForm> {
     _base.text = s.byokBaseUrl;
   }
 
-  String _defaultModel(ByokProvider p) => switch (p) {
-        ByokProvider.gemini => 'gemini-2.5-flash',
-        ByokProvider.openRouter => 'anthropic/claude-haiku-5.5',
-        ByokProvider.groq => 'llama-3.3-70b-versatile',
-        _ => '',
-      };
+  String _defaultModel(ByokProvider p) => p.defaultModel;
 
   Future<void> _save() async {
     final key = _key.text.trim();
@@ -117,14 +112,16 @@ class _ByokFormState extends ConsumerState<ByokForm> {
       showSnack(context, 'Paste your API key.', error: true);
       return;
     }
-    if (_model.text.trim().isEmpty) {
+    final model = _provider.normalizeModel(_model.text);
+    if (model.isEmpty) {
       showSnack(context, 'Enter a model name.', error: true);
       return;
     }
+    if (model != _model.text) _model.text = model; // show the code we actually use
     setState(() => _busy = true);
     try {
-      await ByokLlmClient(provider: _provider, apiKey: key, model: _model.text.trim(), baseUrl: _base.text.trim()).ping();
-      await ref.read(aiSettingsProvider.notifier).saveByok(provider: _provider, model: _model.text.trim(), baseUrl: _base.text.trim(), key: key);
+      await ByokLlmClient(provider: _provider, apiKey: key, model: model, baseUrl: _base.text.trim()).ping();
+      await ref.read(aiSettingsProvider.notifier).saveByok(provider: _provider, model: model, baseUrl: _base.text.trim(), key: key);
       if (mounted) showSnack(context, 'Key verified and saved to your device keystore.');
       widget.onSaved?.call();
     } catch (e) {
@@ -158,7 +155,18 @@ class _ByokFormState extends ConsumerState<ByokForm> {
         ),
       ),
       const SizedBox(height: 12),
-      TextField(controller: _model, decoration: InputDecoration(labelText: 'Model', hintText: _provider.modelHint)),
+      TextField(controller: _model, onChanged: (_) => setState(() {}), decoration: InputDecoration(labelText: 'Model', hintText: _provider.modelHint)),
+      if (_provider.quickModels.isNotEmpty) ...[
+        const SizedBox(height: 8),
+        Wrap(spacing: 6, runSpacing: 6, children: [
+          for (final (code, label) in _provider.quickModels)
+            ChoiceChip(
+              label: Text(label),
+              selected: _provider.normalizeModel(_model.text) == code,
+              onSelected: (_) => setState(() => _model.text = code),
+            ),
+        ]),
+      ],
       if (_provider == ByokProvider.custom || _provider == ByokProvider.openRouter) ...[
         const SizedBox(height: 12),
         TextField(controller: _base, decoration: InputDecoration(labelText: 'Base URL (optional)', hintText: _provider.defaultBaseUrl)),

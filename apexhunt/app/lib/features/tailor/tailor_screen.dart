@@ -35,6 +35,44 @@ class _TailorScreenState extends ConsumerState<TailorScreen> {
   final List<TelemetryEvent> _log = [];
   DateTime? _startedAt;
   TailorEngine? _engine;
+  final Map<String, EvidenceSuggestion> _suggested = {};
+  final Map<String, GlobalKey> _cardKeys = {};
+  bool _suggesting = false, _showErrors = false;
+
+  static bool _needsLine(_CheckIn c) => c.decision == SkillDecision.haveIt && c.context.text.trim().length < 8;
+
+  /// "Fill from my CV": the AI finds where the CV already shows each open skill and drafts the line.
+  Future<void> _fillFromCv() async {
+    final a = _analysis!;
+    final profile = ref.read(profileProvider).value!;
+    final open = [for (final r in a.requirements) if (_checkIns[r.skill]?.decision != SkillDecision.matched) r];
+    setState(() => _suggesting = true);
+    try {
+      final engine = _engine ??= TailorEngine(await ref.read(aiServiceProvider).client());
+      final found = await engine.suggestEvidence(profile, open);
+      setState(() {
+        for (final s in found.values) {
+          final c = _checkIns[s.skill]!;
+          c.decision = SkillDecision.haveIt;
+          if (c.context.text.trim().isEmpty) c.context.text = s.line;
+          c.roleId ??= s.roleId;
+          _suggested[s.skill] = s;
+        }
+      });
+      if (mounted) {
+        final rest = open.length - found.length;
+        showSnack(
+            context,
+            found.isEmpty
+                ? "Your CV doesn't clearly show any of these. They stay as Don't have, unless you add your own line."
+                : 'Found ${found.length} in your CV and drafted the lines. Please check them.${rest > 0 ? ' $rest not found: they stay as Don\'t have.' : ''}');
+      }
+    } catch (e) {
+      if (mounted) handleAiError(context, e);
+    } finally {
+      if (mounted) setState(() => _suggesting = false);
+    }
+  }
 
   Opportunity? get _opp => ref.read(missionProvider).opportunities.where((o) => o.id == widget.opportunityId).firstOrNull;
 
@@ -69,6 +107,8 @@ class _TailorScreenState extends ConsumerState<TailorScreen> {
       _checkIns
         ..clear()
         ..addAll(decisions.map((k, v) => MapEntry(k, _CheckIn(v))));
+      _suggested.clear();
+      _showErrors = false;
       setState(() {
         _analysis = a;
         _step = 1;
@@ -83,11 +123,14 @@ class _TailorScreenState extends ConsumerState<TailorScreen> {
   Future<void> _run() async {
     final o = _opp!;
     final a = _analysis!;
-    for (final e in _checkIns.entries) {
-      if (e.value.decision == SkillDecision.haveIt && e.value.context.text.trim().length < 8) {
-        showSnack(context, 'Add a line about where you used ${e.key} — or mark it as learning.', error: true);
-        return;
-      }
+    final missing = [for (final r in a.requirements) if (_checkIns[r.skill] != null && _needsLine(_checkIns[r.skill]!)) r.skill];
+    if (missing.isNotEmpty) {
+      setState(() => _showErrors = true);
+      final ctx = _cardKeys[missing.first]?.currentContext;
+      if (ctx != null) Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 350), alignment: 0.1);
+      final more = missing.length > 1 ? ' (and ${missing.length - 1} more)' : '';
+      showSnack(context, 'Add one line for ${missing.first}$more, or switch it to Learning or Don\'t have.', error: true);
+      return;
     }
     setState(() {
       _step = 2;
@@ -124,7 +167,13 @@ class _TailorScreenState extends ConsumerState<TailorScreen> {
       final noteF = engine.applicationNote(profile: profile, opportunity: o, analysis: a, cv: cv, decisions: decisions);
       _log_('Building your interview prep: STAR stories, likely questions, gap plans…');
       final prepF = engine.prep(profile: profile, opportunity: o, analysis: a, cv: cv, decisions: decisions);
-      final note = await noteF;
+      var note = '';
+      try {
+        note = await noteF;
+      } catch (e) {
+        // #17: a failed letter must not throw away the tailored CV and prep the user already paid for.
+        _log_('${o.kind == MissionMode.freelance ? 'Proposal' : 'Cover letter'} failed (${e is LlmException ? e.message : e}). Your CV is saved; tap Generate in the Vault to retry.', 'ERROR');
+      }
       PrepDossier prep;
       try {
         prep = await prepF;
@@ -219,7 +268,11 @@ class _TailorScreenState extends ConsumerState<TailorScreen> {
     final profile = ref.watch(profileProvider).value!;
     final matched = a.requirements.where((r) => _checkIns[r.skill]?.decision == SkillDecision.matched).toList();
     final open = a.requirements.where((r) => _checkIns[r.skill]?.decision != SkillDecision.matched).toList();
-    return ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 32), children: [
+    final cs = Theme.of(context).colorScheme;
+    int count(SkillDecision d) => _checkIns.values.where((c) => c.decision == d).length;
+    final missing = _checkIns.values.where(_needsLine).length;
+    // A plain Column (not a lazy list) so every card exists and "scroll to the first missing line" works.
+    return SingleChildScrollView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 32), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Text('Skill check-in', style: t.headlineSmall),
       const SizedBox(height: 6),
       Text(a.summary, style: t.bodyMedium?.copyWith(color: pal.muted)),
@@ -245,8 +298,18 @@ class _TailorScreenState extends ConsumerState<TailorScreen> {
           padding: const EdgeInsets.only(bottom: 10),
           child: Text('Tell us honestly. Skills you have get added with your own words. Everything else stays off the CV and goes into your prep plan.', style: t.bodySmall?.copyWith(color: pal.muted)),
         ),
+      if (open.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: OutlinedButton.icon(
+            onPressed: _suggesting || _busy ? null : _fillFromCv,
+            icon: _suggesting ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.auto_awesome),
+            label: Text(_suggesting ? 'Reading your CV…' : 'Fill from my CV'),
+          ),
+        ),
       for (final r in open)
         Padding(
+          key: _cardKeys.putIfAbsent(r.skill, GlobalKey.new),
           padding: const EdgeInsets.only(bottom: 10),
           child: ApexCard(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -257,7 +320,7 @@ class _TailorScreenState extends ConsumerState<TailorScreen> {
               if (r.evidence.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text('“${r.evidence}”', style: t.bodySmall?.copyWith(color: pal.muted, fontStyle: FontStyle.italic))),
               const SizedBox(height: 10),
               SegmentedButton<SkillDecision>(
-                showSelectedIcon: false,
+                style: SegmentedButton.styleFrom(selectedBackgroundColor: cs.primary, selectedForegroundColor: cs.onPrimary),
                 segments: const [
                   ButtonSegment(value: SkillDecision.haveIt, label: Text('I have it')),
                   ButtonSegment(value: SkillDecision.learning, label: Text('Learning')),
@@ -271,8 +334,23 @@ class _TailorScreenState extends ConsumerState<TailorScreen> {
                 TextField(
                   controller: _checkIns[r.skill]!.context,
                   maxLines: 2,
-                  decoration: InputDecoration(hintText: 'Where and how did you use ${r.skill}? Your words, real details.'),
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(
+                    hintText: 'Where and how did you use ${r.skill}? Your words, real details.',
+                    helperText: _suggested[r.skill] != null ? null : 'One real line. It becomes your CV line for this skill.',
+                    helperMaxLines: 2,
+                    errorText: _showErrors && _needsLine(_checkIns[r.skill]!) ? "Add one line, or choose Learning or Don't have" : null,
+                  ),
                 ),
+                if (_suggested[r.skill] != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Icon(Icons.auto_awesome, size: 14, color: cs.primary),
+                      const SizedBox(width: 6),
+                      Expanded(child: Text('Drafted from your CV: “${_suggested[r.skill]!.quote}”. Edit it if needed.', style: t.bodySmall?.copyWith(color: pal.muted))),
+                    ]),
+                  ),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<String?>(
                   initialValue: _checkIns[r.skill]!.roleId,
@@ -289,9 +367,20 @@ class _TailorScreenState extends ConsumerState<TailorScreen> {
           ),
         ),
       const SizedBox(height: 12),
+      Text(
+        '${matched.length} backed by your CV · ${count(SkillDecision.haveIt)} I have it · ${count(SkillDecision.learning)} learning · ${count(SkillDecision.gap)} don\'t have',
+        textAlign: TextAlign.center,
+        style: t.bodySmall?.copyWith(color: pal.muted),
+      ),
+      if (missing > 0)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text('$missing marked "I have it" still ${missing == 1 ? 'needs' : 'need'} a line', textAlign: TextAlign.center, style: t.bodySmall?.copyWith(color: AppColors.amber)),
+        ),
+      const SizedBox(height: 8),
       FilledButton.icon(onPressed: _busy ? null : _run, icon: const Icon(Icons.auto_fix_high), label: const Text('Tailor my CV & build prep')),
       TextButton(onPressed: () => setState(() => _step = 0), child: const Text('Back to description')),
-    ]);
+    ]));
   }
 
   Widget _running() => ListView(padding: const EdgeInsets.all(16), children: [

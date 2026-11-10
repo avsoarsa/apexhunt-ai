@@ -30,6 +30,17 @@ Return ONLY a JSON object with this shape:
 }
 Most recent role first. Use empty strings/arrays for anything missing.''';
 
+  /// "Fill from my CV" in the skill check-in. The app keeps a suggestion only if its quote is really in the profile.
+  static const suggestEvidence = '''
+You help a candidate answer a skill check-in honestly. For each SKILL, look ONLY in CANDIDATE_PROFILE for experience that clearly shows the candidate did that skill.
+Return ONLY JSON: {"suggestions": [{"skill": "exactly as given", "found": true, "quote": "words copied character for character from CANDIDATE_PROFILE that show it", "line": "one CV-style sentence, max 25 words"}]}
+Rules:
+- found=true only if the profile clearly shows this exact skill. Related or neighbouring experience is NOT enough: MySQL does not show PostgreSQL, "led a team" does not show "product management", "lambda expressions" do not show AWS Lambda.
+- "quote" must be copied exactly from CANDIDATE_PROFILE (a bullet, a skill entry or a sentence). If you can't quote it, set found=false.
+- "line" may only rephrase what the quote says. Never add tools, numbers, employers, team sizes or outcomes that the quote doesn't contain.
+- If found=false, use empty strings for quote and line.
+- One entry per SKILL, in the same order.''';
+
   static const analyzeJd = '''
 You are an expert technical recruiter. Decompose the job description (or freelance brief) into what the hiring side is screening for.
 Return ONLY JSON:
