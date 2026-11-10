@@ -20,7 +20,7 @@ Never upload `build1`: it has placeholder legal links. Use **build2** or newer.
 | Form | Answer for build2 |
 |---|---|
 | **Privacy policy** | `https://github.com/avsoarsa/apexhunt-ai/blob/main/apexhunt/docs/legal/privacy.md` |
-| **App access** | "Some functionality is restricted." Instructions: *"No login. Discovery, profile and documents work without credentials. AI features (CV import with AI, tailoring, prep) need an AI provider key: on the 'Power your AI' screen choose Google Gemini, paste this key: `<REVIEWER_GEMINI_KEY>`, model `gemini-2.5-flash`, tap Test connection & save."* Create a free key at aistudio.google.com/apikey just for reviewers and set a low quota. |
+| **App access** | "Some functionality is restricted." Instructions: *"No login. Discovery, profile and documents work without credentials. AI features (CV import with AI, tailoring, prep) need an AI provider key: on the 'Power your AI' screen choose Google Gemini, paste this key: `<REVIEWER_GEMINI_KEY>`, model `gemini-3.5-flash-lite` (already filled in), tap Test connection & save."* Create a free key at aistudio.google.com/apikey just for reviewers and set a low quota. |
 | **Ads** | No, the app does not contain ads |
 | **Content rating** (IARC) | Category: *Utility, Productivity, Communication or Other*. No violence, sexual content, profanity, drugs or gambling. Users can't interact with each other. No location sharing. No digital purchases in this build. Mention AI-generated text if asked. Expected rating: Everyone / PEGI 3. |
 | **Target audience** | **18 and over** only. Not designed for children. |

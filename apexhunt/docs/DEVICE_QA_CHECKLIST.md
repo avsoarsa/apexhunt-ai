@@ -11,7 +11,8 @@ A short, phone-only pass over the parts of `QA_TEST_PLAN.md` that no one can tes
 - [ ] Open it: a welcome screen within about 3 seconds, with no crash.
 
 ## 1. Onboarding (5 min)
-- [ ] AI step: paste the key with a **space before and after**, then "Test connection". It should pass (spaces trimmed).
+- [ ] AI step (Gemini): the model is pre-filled as `gemini-3.5-flash-lite`, with tap-to-pick chips below it. Typing `gemini 3.8 flash` is turned into `gemini-3.8-flash` (build 4).
+- [ ] Paste the key with a **space before and after**, then "Test connection". It should pass (spaces trimmed) within 30 seconds, or show a plain-language error.
 - [ ] Change one character of the key, then test again. You should see a clear error, not a crash or a raw code.
 - [ ] Read the data notice on the CV step. It should say what goes to the AI provider, and must **not** claim "nothing is used for AI training" without the free-tier caveat (#8).
 - [ ] CV step: paste the **sample CV** below into "or paste it". The review screen should show both roles, the dates, and the skills Node.js and PostgreSQL.
@@ -23,7 +24,9 @@ A short, phone-only pass over the parts of `QA_TEST_PLAN.md` that no one can tes
    - [ ] **Backed by your CV** shows only **Node.js** and **PostgreSQL**.
    - [ ] **Go, C, R, AWS Lambda, Microsoft Access, Kubernetes, Kafka and Rust** are **not** marked as backed. "go live", "C-level", "R&D", "lambda expressions" and "access" in the CV are ordinary words (#10, #23).
    - [ ] Tap × on a backed skill: it moves to the gaps.
-   - [ ] "I have it" refuses to continue without a context line.
+   - [ ] The selected answer on each card is clearly coloured, with a tick, and stays selected after scrolling (build 4).
+   - [ ] Tap **Fill from my CV**: with the sample CV it should mark **none** of Go, C, R, AWS Lambda, Microsoft Access, Kubernetes, Kafka or Rust as "I have it". Any line it drafts shows "Drafted from your CV: …" with a real quote.
+   - [ ] Mark a skill "I have it" with an empty box, then tap Tailor: the card shows "Add one line, or choose Learning or Don't have" and the summary line counts it.
 3. Mark everything that's not backed as **Don't have**, then generate.
 4. In the Vault, read the tailored CV, cover letter and prep:
    - [ ] **None of Go, C, R, AWS Lambda, Access, Kubernetes, Kafka or Rust** appears in the CV, its skills list or its headline.

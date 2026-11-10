@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 
 /// One chat turn.
 class ChatMsg {
@@ -59,10 +60,35 @@ extension ByokProviderInfo on ByokProvider {
         ByokProvider.openRouter => 'e.g. anthropic/claude-haiku-5.5',
         ByokProvider.openAi => 'e.g. gpt-6-luna',
         ByokProvider.anthropic => 'e.g. claude-haiku-5-5',
-        ByokProvider.gemini => 'e.g. gemini-2.5-flash',
+        ByokProvider.gemini => 'e.g. gemini-3.5-flash-lite',
         ByokProvider.groq => 'e.g. llama-3.3-70b-versatile',
         ByokProvider.custom => 'e.g. llama3.1:8b',
       };
+
+  /// Tap-to-pick model codes (Google's models page, Oct 2026). Others are typed in.
+  List<(String code, String label)> get quickModels => switch (this) {
+        ByokProvider.gemini => const [
+            ('gemini-3.5-flash-lite', 'Flash-Lite · fastest, best on free keys'),
+            ('gemini-3.6-flash', '3.6 Flash'),
+            ('gemini-3.8-flash', '3.8 Flash · smartest, can be slow on free keys'),
+          ],
+        _ => const [],
+      };
+
+  /// The model filled in when this provider is chosen.
+  String get defaultModel => switch (this) {
+        ByokProvider.gemini => 'gemini-3.5-flash-lite',
+        ByokProvider.openRouter => 'anthropic/claude-haiku-5.5',
+        ByokProvider.groq => 'llama-3.3-70b-versatile',
+        _ => '',
+      };
+
+  /// Model codes never contain spaces; Gemini's are lowercase ("Gemini 3.8 Flash" → "gemini-3.8-flash").
+  String normalizeModel(String input) {
+    var m = input.trim().replaceAll(RegExp(r'\s+'), '-');
+    if (this == ByokProvider.gemini) m = m.toLowerCase().replaceFirst(RegExp(r'^models/'), '');
+    return m;
+  }
 
   String get keyHelpUrl => switch (this) {
         ByokProvider.openRouter => 'https://openrouter.ai/keys',
@@ -74,19 +100,41 @@ extension ByokProviderInfo on ByokProvider {
       };
 }
 
+@visibleForTesting
+String aiErrorMessage(DioException e) => _errorMessage(e);
+
 String _errorMessage(DioException e) {
-  final data = e.response?.data;
+  final status = e.response?.statusCode;
+  var data = e.response?.data;
+  if (data is String) {
+    try {
+      data = jsonDecode(data);
+    } catch (_) {}
+  }
+  if (data is List && data.isNotEmpty) data = data.first; // Gemini's OpenAI endpoint: [{"error": {...}}]
+  String? detail;
   if (data is Map) {
     final err = data['error'];
-    if (err is Map && err['message'] != null) return '${err['message']}';
-    if (err is String) return err;
-    if (data['detail'] != null) return '${data['detail']}';
+    if (err is Map && err['message'] != null) detail = '${err['message']}';
+    if (err is String) detail = err;
+    if (detail == null && data['detail'] != null) detail = '${data['detail']}';
   }
-  if (e.type == DioExceptionType.connectionTimeout || e.type == DioExceptionType.receiveTimeout) {
-    return 'The AI provider took too long to respond. Please try again.';
+  final hint = switch (status) {
+    400 when (detail ?? '').toLowerCase().contains('model') => "The model code isn't recognised. Pick one from the list (e.g. gemini-3.5-flash-lite).",
+    400 => 'The AI provider rejected the request. Check the model code.',
+    401 || 403 => 'The API key was rejected. Copy it again from your provider and paste it fresh.',
+    404 => "Model not found. Pick one from the list or check the code.",
+    429 => 'Rate limit or free quota reached. Wait a minute, or pick a lighter model.',
+    final int s when s >= 500 => 'The AI provider is having trouble. Try again, or pick a faster model.',
+    _ => null,
+  };
+  if (hint != null) return detail == null || detail.length > 160 ? hint : '$hint ($detail)';
+  if (detail != null) return detail;
+  if (e.type == DioExceptionType.connectionTimeout || e.type == DioExceptionType.receiveTimeout || e.type == DioExceptionType.sendTimeout) {
+    return 'The AI provider took too long to respond. Try again, or pick a faster model.';
   }
   if (e.type == DioExceptionType.connectionError) return 'No connection to the AI provider. Check your internet.';
-  return 'AI request failed (${e.response?.statusCode ?? 'network'}).';
+  return 'The connection to the AI provider dropped before it answered. Try again, or pick a faster model.';
 }
 
 /// Calls the user's own provider directly from the device. The key never touches our servers.
@@ -103,16 +151,19 @@ class ByokLlmClient implements LlmClient {
   String get label => '${provider.label} · $model';
 
   @override
-  Future<LlmResult> complete(List<ChatMsg> messages, {bool json = false, int maxTokens = 3000, double temperature = 0.4, String purpose = 'chat'}) async {
+  Future<LlmResult> complete(List<ChatMsg> messages, {bool json = false, int maxTokens = 3000, double temperature = 0.4, String purpose = 'chat'}) =>
+      _complete(messages, json: json, maxTokens: maxTokens, temperature: temperature);
+
+  Future<LlmResult> _complete(List<ChatMsg> messages, {bool json = false, int maxTokens = 3000, double temperature = 0.4, Duration? timeout}) async {
     try {
-      if (provider == ByokProvider.anthropic) return await _anthropic(messages, json, maxTokens, temperature);
-      return await _openAiCompatible(messages, json, maxTokens, temperature);
+      if (provider == ByokProvider.anthropic) return await _anthropic(messages, json, maxTokens, temperature, timeout);
+      return await _openAiCompatible(messages, json, maxTokens, temperature, timeout);
     } on DioException catch (e) {
       throw LlmException(_errorMessage(e));
     }
   }
 
-  Future<LlmResult> _openAiCompatible(List<ChatMsg> messages, bool json, int maxTokens, double temperature) async {
+  Future<LlmResult> _openAiCompatible(List<ChatMsg> messages, bool json, int maxTokens, double temperature, Duration? timeout) async {
     final body = <String, dynamic>{
       'model': model,
       'messages': messages.map((m) => m.toJson()).toList(),
@@ -126,12 +177,12 @@ class ByokLlmClient implements LlmClient {
     };
     Response res;
     try {
-      res = await _dio.post('$baseUrl/chat/completions', data: body, options: Options(headers: headers));
+      res = await _dio.post('$baseUrl/chat/completions', data: body, options: Options(headers: headers, receiveTimeout: timeout));
     } on DioException catch (e) {
       // Some local/custom servers reject response_format — retry once without it.
       if (json && (e.response?.statusCode == 400 || e.response?.statusCode == 422)) {
         body.remove('response_format');
-        res = await _dio.post('$baseUrl/chat/completions', data: body, options: Options(headers: headers));
+        res = await _dio.post('$baseUrl/chat/completions', data: body, options: Options(headers: headers, receiveTimeout: timeout));
       } else {
         rethrow;
       }
@@ -146,7 +197,7 @@ class ByokLlmClient implements LlmClient {
     );
   }
 
-  Future<LlmResult> _anthropic(List<ChatMsg> messages, bool json, int maxTokens, double temperature) async {
+  Future<LlmResult> _anthropic(List<ChatMsg> messages, bool json, int maxTokens, double temperature, Duration? timeout) async {
     final system = messages.where((m) => m.role == 'system').map((m) => m.content).join('\n\n');
     final turns = messages.where((m) => m.role != 'system').map((m) => m.toJson()).toList();
     final res = await _dio.post('$baseUrl/messages',
@@ -157,7 +208,7 @@ class ByokLlmClient implements LlmClient {
           if (system.isNotEmpty) 'system': json ? '$system\n\nRespond with a single valid JSON object only.' : system,
           'messages': turns,
         },
-        options: Options(headers: {'x-api-key': apiKey, 'anthropic-version': '2023-06-01'}));
+        options: Options(headers: {'x-api-key': apiKey, 'anthropic-version': '2023-06-01'}, receiveTimeout: timeout));
     final data = res.data as Map;
     final blocks = (data['content'] as List? ?? []).whereType<Map>();
     final text = blocks.where((b) => b['type'] == 'text').map((b) => b['text']).join();
@@ -169,9 +220,9 @@ class ByokLlmClient implements LlmClient {
     );
   }
 
-  /// 5-token ping used by "Verify & save".
-  Future<void> ping() async {
-    await complete(const [ChatMsg.user('Reply with the word OK.')], maxTokens: 5, temperature: 0);
+  /// Short ping used by "Test connection": gives up after 30 seconds instead of the 3 minutes real steps get.
+  Future<void> ping({Duration timeout = const Duration(seconds: 30)}) async {
+    await _complete(const [ChatMsg.user('Reply with the word OK.')], maxTokens: 5, temperature: 0, timeout: timeout);
   }
 }
 

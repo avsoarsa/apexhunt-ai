@@ -13,6 +13,13 @@ import '../../core/text_match.dart';
 ///   5. ATS scorer      — before/after keyword coverage (deterministic)
 ///   6. Prep Coach      — STAR stories, likely questions, honest gap plans (AI)
 ///   7. Cover letter / freelance proposal (AI)
+/// A drafted "where did you use it" line, backed by an exact quote from the user's own CV.
+class EvidenceSuggestion {
+  EvidenceSuggestion({required this.skill, required this.quote, required this.line, this.roleId});
+  final String skill, quote, line;
+  final String? roleId;
+}
+
 class TailorEngine {
   TailorEngine(this.llm);
   final LlmClient llm;
@@ -39,6 +46,64 @@ class TailorEngine {
     if (a.title.isEmpty) a.title = o.title;
     if (a.company.isEmpty) a.company = o.company;
     return a;
+  }
+
+  // ------------------------------------------------------------------ 1b. "Fill from my CV"
+
+  /// Asks the AI where the CV already shows each skill, then keeps only suggestions that hold up:
+  /// the quote must really be in the profile, and the drafted line may not add numbers or other
+  /// skills the profile can't back. The user still reviews every line before it's used.
+  Future<Map<String, EvidenceSuggestion>> suggestEvidence(MasterProfile profile, List<Requirement> reqs) async {
+    if (reqs.isEmpty) return {};
+    final j = await _json(
+      Prompts.suggestEvidence,
+      'CANDIDATE_PROFILE:\n${jsonEncode(profile.toPromptJson())}\n\nSKILLS:\n${jsonEncode([for (final r in reqs) {'skill': r.skill, 'job_says': r.evidence}])}',
+      maxTokens: 2500,
+      purpose: 'suggest_evidence',
+    );
+    return verifiedSuggestions(profile, reqs, j);
+  }
+
+  static const _strictCategories = {'hard_skill', 'tool', 'certification'};
+
+  /// "Claude Code", "Node.js", "C++", "k8s" are distinctive; "Lambda" or "Access" alone are ordinary words.
+  static bool _distinctiveAlias(String a) {
+    final t = a.trim();
+    return t.split(RegExp(r'\s+')).length >= 2 || RegExp(r'[^A-Za-z\s]').hasMatch(t);
+  }
+
+  static Map<String, EvidenceSuggestion> verifiedSuggestions(MasterProfile p, List<Requirement> reqs, Map<String, dynamic> j) {
+    final corpus = TextMatch.normalize(p.truthCorpus);
+    final bySkill = {for (final r in reqs) TextMatch.canonical(r.skill): r};
+    final out = <String, EvidenceSuggestion>{};
+    for (final s in (j['suggestions'] as List? ?? const []).whereType<Map>()) {
+      if (s['found'] != true) continue;
+      final r = bySkill[TextMatch.canonical('${s['skill'] ?? ''}')];
+      if (r == null) continue;
+      final quote = '${s['quote'] ?? ''}'.trim();
+      final line = '${s['line'] ?? ''}'.trim();
+      final nq = TextMatch.normalize(quote);
+      if (nq.length < 12 || line.length < 8 || !corpus.contains(nq)) continue; // not really in the CV
+      if (TextMatch.unsupportedNumbers(line, p.truthCorpus).isNotEmpty) continue; // invented numbers
+      // Technical skills: the quote itself must name the skill, by its full name or a distinctive alias.
+      // A single ordinary word ("lambda", "access") never counts, so "Java lambda expressions" can't become AWS Lambda.
+      if (_strictCategories.contains(r.category) &&
+          !TextMatch.mentionsStrict(nq, r.skill) &&
+          !r.aliases.any((a) => _distinctiveAlias(a) && TextMatch.containsTerm(nq, TextMatch.normalize(a)))) {
+        continue;
+      }
+      final others = [for (final o in reqs) if (o != r) o];
+      if (TextMatch.unsupportedClaims(line, p, others).isNotEmpty) continue; // smuggles in another missing skill
+      String? roleId;
+      for (final role in p.roles) {
+        if ([role.title, role.company, ...role.bullets, ...role.skills].any((b) => TextMatch.normalize(b).contains(nq) || (b.length > 12 && nq.contains(TextMatch.normalize(b))))) {
+          roleId = role.id;
+          break;
+        }
+      }
+      out[r.skill] = EvidenceSuggestion(skill: r.skill, quote: quote, line: line, roleId: roleId);
+    }
+    return out;
   }
 
   // ------------------------------------------------------------------ 2. initial decisions
